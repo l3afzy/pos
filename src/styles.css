@@ -79,6 +79,7 @@ main { padding:1rem; }
 .totals { display:grid; grid-template-columns:1fr auto; gap:.3rem; margin:.75rem 0; }
 .totals dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
 .totals .grand { font-weight:800; font-size:1.35rem; }
+.totals .sub { color:var(--muted); font-size:.85rem; }
 label.inline { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-top:.5rem; }
 label.inline input[type=number] { width:5rem; }
 
@@ -104,6 +105,14 @@ tr.refunded td:last-child, tr.refunded td:nth-last-child(2) { text-decoration:no
 .inline-form input { min-width:0; flex:1 1 120px; }
 .stack { display:flex; flex-direction:column; gap:.75rem; max-width:420px; }
 .stack label { display:flex; flex-direction:column; gap:.3rem; }
+.settings { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:1rem; align-items:start; }
+.settings fieldset { border:1px solid var(--border); border-radius:12px; padding:.75rem 1rem 1rem; background:var(--panel); display:flex; flex-direction:column; gap:.65rem; min-width:0; }
+.settings legend { font-weight:700; padding:0 .35rem; }
+.settings label { display:flex; flex-direction:column; gap:.3rem; font-size:.92rem; }
+.settings input, .settings select, .settings textarea { width:100%; }
+td.actions button { margin:2px; }
+label.check { display:flex; align-items:center; gap:.35rem; }
+.login-top { display:flex; justify-content:flex-end; margin:-.5rem -.5rem 0 0; }
 .kpis { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:.6rem; }
 .kpis div { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:.75rem 1rem; box-shadow:var(--shadow); }
 .kpis span { display:block; font-size:.8rem; color:var(--muted); }
@@ -119,14 +128,40 @@ dialog label { display:flex; flex-direction:column; gap:.3rem; }
 #pay-amount { font-size:1.4rem; text-align:right; }
 .pay-list { list-style:none; padding:0; margin:0 0 .5rem; }
 .pay-list li { display:flex; justify-content:space-between; align-items:center; padding:.3rem 0; border-bottom:1px dashed var(--border); }
-#receipt { font-family:ui-monospace, "Courier New", monospace; font-size:13px; line-height:1.35; margin:0 auto; width:max-content; max-width:100%; overflow:auto; }
+/* Receipts: rendered as flex rows (not monospace text) so Thai and other
+   scripts align correctly. Sized for 80mm thermal paper. */
+.receipt { width:72mm; max-width:100%; margin:0 auto; font-family: system-ui, "Sarabun", "Noto Sans Thai", "Leelawadee UI", Tahoma, sans-serif; font-size:12.5px; line-height:1.4; color:#000; background:#fff; padding:10px; font-variant-numeric:tabular-nums; }
+.receipt .r-c { text-align:center; overflow-wrap:anywhere; }
+.receipt .r-t { overflow-wrap:anywhere; }
+.receipt .r-lr { display:flex; justify-content:space-between; gap:8px; }
+.receipt .r-lr span:first-child { overflow-wrap:anywhere; }
+.receipt .r-lr span:last-child { white-space:nowrap; text-align:right; }
+.receipt .r-hr { border-top:1px dashed #000; margin:4px 0; }
+.receipt .r-hr.double { border-top:3px double #000; }
+.receipt .r-gap { height:.6em; }
+.receipt .big { font-size:1.25em; font-weight:700; }
+.receipt .title { font-weight:700; font-size:1.1em; }
+.receipt .small { font-size:.85em; }
+.receipt .grand { font-weight:800; font-size:1.2em; }
+.receipt .bold { font-weight:700; }
+
+/* PromptPay */
+.pp-panel { text-align:center; border:1px solid var(--border); border-radius:12px; padding:.75rem; margin:.5rem 0; }
+.pp-head { background:#0e3a6b; color:#fff; font-weight:700; padding:.4rem; border-radius:8px; margin-bottom:.5rem; }
+.pp-qr { width:min(240px, 70vw); margin:0 auto; background:#fff; }
+.pp-qr svg { display:block; width:100%; height:auto; }
+.pp-amount { font-size:1.6rem; font-weight:800; margin-top:.25rem; }
 
 #toast { position:fixed; bottom:1rem; left:50%; transform:translateX(-50%); padding:.65rem 1.1rem; border-radius:8px; background:#111827; color:#fff; opacity:0; transition:opacity .2s; pointer-events:none; z-index:100; max-width:calc(100vw - 32px); }
 #toast.show { opacity:1; }
 #toast.error { background:var(--danger); }
 
 @media print {
+  @page { size: 80mm auto; margin: 0; }
+  body { background:#fff; }
   body > *:not(#receipt-dialog) { display:none !important; }
-  #receipt-dialog { position:static; border:0; box-shadow:none; width:auto; padding:0; }
+  #receipt-dialog { position:static; border:0; box-shadow:none; width:auto; padding:0; margin:0; }
+  #receipt-dialog::backdrop { display:none; }
+  .receipt { padding:2mm 4mm; }
   .no-print { display:none !important; }
 }

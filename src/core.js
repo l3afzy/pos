@@ -1,20 +1,49 @@
-// Pure POS logic. All money values are integer cents to avoid float errors.
+// Pure POS logic. All money values are integers in the currency's minor unit
+// (cents, satang, ...) to avoid floating-point errors.
 (function (root) {
   'use strict';
 
-  function toCents(value) {
-    const s = String(value).trim();
-    if (!/^\d+(\.\d{1,2})?$/.test(s)) throw new Error('Invalid amount: ' + value);
-    const [whole, frac = ''] = s.split('.');
-    return Number(whole) * 100 + Number((frac + '00').slice(0, 2));
+  // Errors carry a code (+ params) so the UI can show them in any language.
+  function fail(code, message, params) {
+    const e = new Error(message);
+    e.code = code;
+    e.params = params || {};
+    return e;
   }
 
-  function formatCents(cents) {
-    const sign = cents < 0 ? '-' : '';
-    const abs = Math.abs(cents);
-    const whole = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    return sign + '$' + whole + '.' + String(abs % 100).padStart(2, '0');
+  // ------------------------------------------------------------ money ---
+  function currencyDecimals(code) {
+    try {
+      return new Intl.NumberFormat('en', { style: 'currency', currency: code }).resolvedOptions().maximumFractionDigits;
+    } catch (e) {
+      throw fail('currency', 'Unknown currency code: ' + code, { v: code });
+    }
   }
+
+  // Parse a decimal string ("12.5") into minor units without floating point.
+  function toMinor(value, decimals = 2) {
+    const s = String(value).trim();
+    const re = decimals > 0 ? new RegExp(`^\\d+(\\.\\d{1,${decimals}})?$`) : /^\d+$/;
+    if (!re.test(s)) throw fail('amount', 'Invalid amount: ' + value, { v: value });
+    const [whole, frac = ''] = s.split('.');
+    return Number(whole) * 10 ** decimals + Number((frac + '0'.repeat(decimals)).slice(0, decimals) || 0);
+  }
+
+  const fmtCache = new Map();
+  function formatMoney(minor, { currency = 'USD', locale = 'en-US', decimals } = {}) {
+    const d = decimals != null ? decimals : currencyDecimals(currency);
+    const key = locale + '|' + currency + '|' + d;
+    let f = fmtCache.get(key);
+    if (!f) {
+      f = new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: d, maximumFractionDigits: d });
+      fmtCache.set(key, f);
+    }
+    return f.format((minor || 0) / 10 ** d); // || 0 also turns -0 into 0
+  }
+
+  // Back-compat helpers for US dollars.
+  const toCents = v => toMinor(v, 2);
+  const formatCents = c => formatMoney(c, { currency: 'USD', locale: 'en-US', decimals: 2 });
 
   // Round half up for non-negative values.
   function roundDiv(n, d) {
@@ -22,27 +51,31 @@
   }
 
   function checkPct(pct, label) {
-    if (typeof pct !== 'number' || !(pct >= 0 && pct <= 100)) throw new Error(label + ' must be 0-100%');
+    if (typeof pct !== 'number' || !(pct >= 0 && pct <= 100)) throw fail('pct', label + ' must be 0-100%');
   }
 
   function pctOf(amount, pct) {
     return roundDiv(amount * Math.round(pct * 100), 10000);
   }
 
+  // ------------------------------------------------------------- cart ---
   function addToCart(cart, product, qty = 1) {
-    if (!Number.isInteger(qty) || qty <= 0) throw new Error('Quantity must be a positive integer');
+    if (!Number.isInteger(qty) || qty <= 0) throw fail('qty', 'Quantity must be a positive integer');
     const existing = cart.find(l => l.id === product.id);
     const newQty = (existing ? existing.qty : 0) + qty;
-    if (newQty > product.stock) throw new Error(`Only ${product.stock} of "${product.name}" in stock`);
+    if (newQty > product.stock) throw fail('stock', `Only ${product.stock} of "${product.name}" in stock`, { n: product.stock, name: product.name });
     if (existing) {
       return cart.map(l => (l.id === product.id ? { ...l, qty: newQty } : l));
     }
-    return [...cart, { id: product.id, sku: product.sku, name: product.name, price: product.price, qty, discountPct: 0 }];
+    return [...cart, {
+      id: product.id, sku: product.sku, name: product.name, price: product.price, qty, discountPct: 0,
+      taxable: product.taxable !== false,
+    }];
   }
 
   function setQty(cart, id, qty, stock) {
-    if (!Number.isInteger(qty) || qty < 0) throw new Error('Quantity must be a non-negative integer');
-    if (qty > stock) throw new Error(`Only ${stock} in stock`);
+    if (!Number.isInteger(qty) || qty < 0) throw fail('qty', 'Quantity must be a non-negative integer');
+    if (qty > stock) throw fail('stockN', `Only ${stock} in stock`, { n: stock });
     if (qty === 0) return cart.filter(l => l.id !== id);
     return cart.map(l => (l.id === id ? { ...l, qty } : l));
   }
@@ -58,50 +91,83 @@
     return { gross, discount, net: gross - discount };
   }
 
-  // orderDiscountPct: 0..100, taxRateBp: basis points (825 = 8.25%)
-  function computeTotals(cart, orderDiscountPct = 0, taxRateBp = 0) {
+  // tax: { rateBp, inclusive } or a plain number of basis points (exclusive).
+  //  - exclusive (US sales tax): tax is added on top of prices.
+  //  - inclusive (VAT/GST, e.g. Thailand 7%): prices already contain tax; the
+  //    tax portion is extracted as amount * rate / (100% + rate).
+  // Lines with taxable === false are exempt.
+  function computeTotals(cart, orderDiscountPct = 0, tax = 0) {
+    const { rateBp, inclusive } = typeof tax === 'number' ? { rateBp: tax, inclusive: false } : tax;
     checkPct(orderDiscountPct, 'Discount');
-    if (!Number.isInteger(taxRateBp) || taxRateBp < 0) throw new Error('Tax rate must be non-negative');
-    let gross = 0, itemDiscount = 0;
+    if (!Number.isInteger(rateBp) || rateBp < 0) throw fail('taxRate', 'Tax rate must be non-negative');
+    let gross = 0, itemDiscount = 0, taxableSub = 0, exemptSub = 0;
     for (const l of cart) {
       const t = lineTotals(l);
       gross += t.gross;
       itemDiscount += t.discount;
+      if (l.taxable === false) exemptSub += t.net; else taxableSub += t.net;
     }
     const subtotal = gross - itemDiscount;
-    const orderDiscount = pctOf(subtotal, orderDiscountPct);
-    const taxable = subtotal - orderDiscount;
-    const tax = roundDiv(taxable * taxRateBp, 10000);
-    return { gross, itemDiscount, subtotal, orderDiscount, discount: itemDiscount + orderDiscount, tax, total: taxable + tax };
+    const taxableDisc = pctOf(taxableSub, orderDiscountPct);
+    const exemptDisc = pctOf(exemptSub, orderDiscountPct);
+    const orderDiscount = taxableDisc + exemptDisc;
+    const taxableAmount = taxableSub - taxableDisc; // incl. tax when inclusive
+    const exemptAmount = exemptSub - exemptDisc;
+    const taxAmt = inclusive ? roundDiv(taxableAmount * rateBp, 10000 + rateBp) : roundDiv(taxableAmount * rateBp, 10000);
+    const total = subtotal - orderDiscount + (inclusive ? 0 : taxAmt);
+    return {
+      gross, itemDiscount, subtotal, orderDiscount, discount: itemDiscount + orderDiscount,
+      taxInclusive: !!inclusive, taxRateBp: rateBp,
+      taxBase: inclusive ? taxableAmount - taxAmt : taxableAmount, // value of taxable goods before tax
+      exemptAmount, tax: taxAmt, total,
+    };
   }
 
-  // payments: [{ method: 'cash'|'card', amount: cents }]
-  // Card payments may not exceed the remaining balance; any overpayment must be
-  // cash and is returned as change.
+  // ---------------------------------------------------------- payment ---
+  const METHODS = ['cash', 'card', 'promptpay'];
+
+  // payments: [{ method, amount }]. Only cash may exceed the balance (change);
+  // card/PromptPay together may not exceed the total.
   function settle(total, payments) {
-    if (!payments.length) throw new Error('No payment entered');
-    let paid = 0, cash = 0, card = 0;
+    if (!payments.length) throw fail('noPayment', 'No payment entered');
+    const byMethod = {};
+    let paid = 0, nonCash = 0;
     for (const p of payments) {
-      if (!Number.isInteger(p.amount) || p.amount <= 0) throw new Error('Payment amounts must be positive');
-      if (p.method === 'cash') cash += p.amount;
-      else if (p.method === 'card') card += p.amount;
-      else throw new Error('Unknown payment method');
+      if (!METHODS.includes(p.method)) throw fail('method', 'Unknown payment method');
+      if (!Number.isInteger(p.amount) || p.amount <= 0) throw fail('payPositive', 'Payment amounts must be positive');
+      byMethod[p.method] = (byMethod[p.method] || 0) + p.amount;
+      if (p.method !== 'cash') nonCash += p.amount;
       paid += p.amount;
     }
-    if (card > total) throw new Error('Card payments cannot exceed the total');
-    if (paid < total) throw new Error(`Balance due: ${formatCents(total - paid)}`);
+    if (nonCash > total) throw fail('nonCash', 'Card/QR payments cannot exceed the total');
+    if (paid < total) throw fail('short', 'Payment is less than the total');
     const change = paid - total;
-    return { paid, change, cashNet: cash - change, cardNet: card };
+    if (change) byMethod.cash -= change; // change always comes out of cash
+    if (byMethod.cash === 0) delete byMethod.cash;
+    return { paid, change, byMethod };
   }
 
-  function checkout({ cart, products, orderDiscountPct = 0, taxRateBp = 0, payments, cashier, shiftId, now = Date.now(), id }) {
-    if (!cart.length) throw new Error('Cart is empty');
+  // Net amount per tender for a sale, including sales saved by older versions.
+  function saleTenders(s) {
+    if (s.byMethod) return s.byMethod;
+    if (s.cashNet != null || s.cardNet != null) {
+      const r = {};
+      if (s.cashNet) r.cash = s.cashNet;
+      if (s.cardNet) r.card = s.cardNet;
+      return r;
+    }
+    return s.method ? { [s.method]: s.total } : {};
+  }
+
+  function checkout({ cart, products, orderDiscountPct = 0, tax = 0, taxRateBp, payments, cashier, shiftId, currency = 'USD', now = Date.now(), id }) {
+    if (!cart.length) throw fail('emptyCart', 'Cart is empty');
+    if (taxRateBp != null) tax = taxRateBp;
     for (const line of cart) {
       const p = products.find(x => x.id === line.id);
-      if (!p) throw new Error(`Product "${line.name}" no longer exists`);
-      if (line.qty > p.stock) throw new Error(`Only ${p.stock} of "${p.name}" in stock`);
+      if (!p) throw fail('productGone', `Product "${line.name}" no longer exists`, { name: line.name });
+      if (line.qty > p.stock) throw fail('stock', `Only ${p.stock} of "${p.name}" in stock`, { n: p.stock, name: p.name });
     }
-    const totals = computeTotals(cart, orderDiscountPct, taxRateBp);
+    const totals = computeTotals(cart, orderDiscountPct, tax);
     const s = settle(totals.total, payments);
     const updatedProducts = products.map(p => {
       const line = cart.find(l => l.id === p.id);
@@ -110,8 +176,9 @@
     const sale = {
       id: id || 'S' + now,
       date: new Date(now).toISOString(),
+      currency,
       lines: cart.map(l => ({ ...l, ...lineTotals(l) })),
-      orderDiscountPct, taxRateBp,
+      orderDiscountPct,
       payments: payments.map(p => ({ ...p })),
       cashier: cashier || null, shiftId: shiftId || null,
       refunded: false,
@@ -120,55 +187,58 @@
     return { sale, products: updatedProducts };
   }
 
-  // Refunds go back to the original tenders (cash portion in cash, card to card).
-  function refund(sale, products, { by, shiftId, now = Date.now() } = {}) {
-    if (sale.refunded) throw new Error('Sale already refunded');
+  // Refunds go back to the original tenders.
+  function refund(sale, products, { by, shiftId, id, now = Date.now() } = {}) {
+    if (sale.refunded) throw fail('refunded', 'Sale already refunded');
     const updatedProducts = products.map(p => {
       const line = sale.lines.find(l => l.id === p.id);
       return line ? { ...p, stock: p.stock + line.qty } : p;
     });
     return {
-      sale: { ...sale, refunded: true, refund: { date: new Date(now).toISOString(), by: by || null, shiftId: shiftId || null } },
+      sale: { ...sale, refunded: true, refund: { id: id || null, date: new Date(now).toISOString(), by: by || null, shiftId: shiftId || null } },
       products: updatedProducts,
     };
   }
 
-  function saleCash(s) { return s.cashNet != null ? s.cashNet : (s.method === 'cash' ? s.total : 0); }
-  function saleCard(s) { return s.cardNet != null ? s.cardNet : (s.method === 'card' ? s.total : 0); }
-
-  function openShift({ id, cashier, float, now = Date.now() }) {
-    if (!Number.isInteger(float) || float < 0) throw new Error('Opening float must be ≥ 0');
-    return { id, openedBy: cashier, openedAt: new Date(now).toISOString(), float, movements: [], closedAt: null };
+  // ------------------------------------------------------------ shifts ---
+  function openShift({ id, cashier, float, currency = 'USD', now = Date.now() }) {
+    if (!Number.isInteger(float) || float < 0) throw fail('float', 'Opening float must be ≥ 0');
+    return { id, currency, openedBy: cashier, openedAt: new Date(now).toISOString(), float, movements: [], closedAt: null };
   }
 
   function addMovement(shift, { type, amount, reason, by, now = Date.now() }) {
-    if (shift.closedAt) throw new Error('Shift is closed');
-    if (type !== 'in' && type !== 'out') throw new Error('Unknown movement type');
-    if (!Number.isInteger(amount) || amount <= 0) throw new Error('Amount must be positive');
-    if (!reason || !String(reason).trim()) throw new Error('A reason is required');
+    if (shift.closedAt) throw fail('shiftClosed', 'Shift is closed');
+    if (type !== 'in' && type !== 'out') throw fail('movementType', 'Unknown movement type');
+    if (!Number.isInteger(amount) || amount <= 0) throw fail('movement', 'Amount must be positive');
+    if (!reason || !String(reason).trim()) throw fail('reason', 'A reason is required');
     return { ...shift, movements: [...shift.movements, { type, amount, reason: String(reason).trim(), by, date: new Date(now).toISOString() }] };
+  }
+
+  function addTo(map, tenders) {
+    for (const [k, v] of Object.entries(tenders)) map[k] = (map[k] || 0) + v;
+    return map;
   }
 
   function shiftReport(shift, sales) {
     const inShift = sales.filter(s => s.shiftId === shift.id);
     const refundsInShift = sales.filter(s => s.refunded && s.refund && s.refund.shiftId === shift.id);
     const sum = (arr, f) => arr.reduce((a, x) => a + f(x), 0);
-    const cashSales = sum(inShift, saleCash);
-    const cardSales = sum(inShift, saleCard);
-    const cashRefunds = sum(refundsInShift, saleCash);
-    const cardRefunds = sum(refundsInShift, saleCard);
+    const salesBy = inShift.reduce((m, s) => addTo(m, saleTenders(s)), {});
+    const refundsBy = refundsInShift.reduce((m, s) => addTo(m, saleTenders(s)), {});
     const payIns = sum(shift.movements.filter(m => m.type === 'in'), m => m.amount);
     const payOuts = sum(shift.movements.filter(m => m.type === 'out'), m => m.amount);
+    const cashSales = salesBy.cash || 0, cashRefunds = refundsBy.cash || 0;
     const expectedCash = shift.float + cashSales - cashRefunds + payIns - payOuts;
+    const grossSales = sum(inShift, s => s.total);
+    const refundTotal = sum(refundsInShift, s => s.total);
     return {
-      transactions: inShift.length,
-      grossSales: sum(inShift, s => s.total),
-      tax: sum(inShift, s => s.tax),
+      transactions: inShift.length, grossSales,
+      tax: sum(inShift, s => s.tax) - sum(refundsInShift, s => s.tax),
       discounts: sum(inShift, s => s.discount || 0),
-      cashSales, cardSales, cashRefunds, cardRefunds,
-      refundCount: refundsInShift.length,
-      refundTotal: sum(refundsInShift, s => s.total),
-      netSales: sum(inShift, s => s.total) - sum(refundsInShift, s => s.total),
+      salesBy, refundsBy,
+      cashSales, cardSales: salesBy.card || 0, cashRefunds, cardRefunds: refundsBy.card || 0,
+      refundCount: refundsInShift.length, refundTotal,
+      netSales: grossSales - refundTotal,
       payIns, payOuts, float: shift.float, expectedCash,
       counted: shift.counted != null ? shift.counted : null,
       variance: shift.counted != null ? shift.counted - expectedCash : null,
@@ -176,31 +246,32 @@
   }
 
   function closeShift(shift, sales, counted, { by, now = Date.now() } = {}) {
-    if (shift.closedAt) throw new Error('Shift already closed');
-    if (!Number.isInteger(counted) || counted < 0) throw new Error('Counted cash must be ≥ 0');
+    if (shift.closedAt) throw fail('shiftClosed', 'Shift already closed');
+    if (!Number.isInteger(counted) || counted < 0) throw fail('float', 'Counted cash must be ≥ 0');
     const closed = { ...shift, closedAt: new Date(now).toISOString(), closedBy: by || null, counted };
     return { ...closed, report: shiftReport(closed, sales) };
   }
 
-  // Sales report over [from, to) ISO dates. Refunded sales are excluded from revenue.
-  function salesReport(sales, { from, to } = {}) {
-    const inRange = sales.filter(s => (!from || s.date >= from) && (!to || s.date < to));
+  // ----------------------------------------------------------- reports ---
+  // Sales report over [from, to) ISO dates, optionally for one currency.
+  // Refunded sales are excluded from revenue.
+  function salesReport(sales, { from, to, currency } = {}) {
+    const inRange = sales.filter(s => (!from || s.date >= from) && (!to || s.date < to) && (!currency || (s.currency || 'USD') === currency));
     const valid = inRange.filter(s => !s.refunded);
-    const byMethod = { cash: 0, card: 0 };
+    const byMethod = {};
     const byCashier = {};
     const byProduct = {};
     let revenue = 0, tax = 0, discounts = 0, items = 0;
     for (const s of valid) {
       revenue += s.total; tax += s.tax; discounts += s.discount || 0;
-      byMethod.cash += saleCash(s); byMethod.card += saleCard(s);
+      addTo(byMethod, saleTenders(s));
       const c = s.cashier || 'Unknown';
       byCashier[c] = byCashier[c] || { count: 0, total: 0 };
       byCashier[c].count++; byCashier[c].total += s.total;
       for (const l of s.lines) {
-        const k = l.id;
-        byProduct[k] = byProduct[k] || { name: l.name, qty: 0, net: 0 };
-        byProduct[k].qty += l.qty;
-        byProduct[k].net += l.net != null ? l.net : l.price * l.qty;
+        byProduct[l.id] = byProduct[l.id] || { name: l.name, qty: 0, net: 0 };
+        byProduct[l.id].qty += l.qty;
+        byProduct[l.id].net += l.net != null ? l.net : l.price * l.qty;
         items += l.qty;
       }
     }
@@ -223,19 +294,72 @@
   }
 
   function salesCSV(sales) {
-    const money = c => (c / 100).toFixed(2);
-    const rows = [['Sale ID', 'Date', 'Cashier', 'Items', 'Subtotal', 'Discount', 'Tax', 'Total', 'Cash', 'Card', 'Status']];
+    const rows = [['Sale ID', 'Date', 'Currency', 'Cashier', 'Items', 'Subtotal', 'Discount', 'Tax', 'Tax included', 'Total', 'Cash', 'Card', 'PromptPay', 'Status', 'Tax invoice', 'Refund doc']];
     for (const s of sales) {
-      rows.push([s.id, s.date, s.cashier || '', s.lines.reduce((a, l) => a + l.qty, 0),
-        money(s.subtotal), money(s.discount || 0), money(s.tax), money(s.total),
-        money(saleCash(s)), money(saleCard(s)), s.refunded ? 'Refunded' : 'Completed']);
+      const cur = s.currency || 'USD';
+      const d = currencyDecimals(cur);
+      const amt = m => ((m || 0) / 10 ** d).toFixed(d);
+      const t = saleTenders(s);
+      rows.push([s.id, s.date, cur, s.cashier || '', s.lines.reduce((a, l) => a + l.qty, 0),
+        amt(s.subtotal), amt(s.discount), amt(s.tax), s.taxInclusive ? 'yes' : 'no', amt(s.total),
+        amt(t.cash), amt(t.card), amt(t.promptpay), s.refunded ? 'Refunded' : 'Completed',
+        s.fullInvoice ? s.fullInvoice.no : '', s.refund && s.refund.id ? s.refund.id : '']);
     }
     return toCSV(rows);
   }
 
+  // --------------------------------------------------------- Thailand ---
+  // Thai 13-digit tax/citizen ID checksum.
+  function isValidThaiTaxId(id) {
+    const s = String(id).replace(/[\s-]/g, '');
+    if (!/^\d{13}$/.test(s)) return false;
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += Number(s[i]) * (13 - i);
+    return (11 - (sum % 11)) % 10 === Number(s[12]);
+  }
+
+  // CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), as used by EMVCo QR.
+  function crc16(str) {
+    let crc = 0xffff;
+    for (let i = 0; i < str.length; i++) {
+      crc ^= str.charCodeAt(i) << 8;
+      for (let b = 0; b < 8; b++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc;
+  }
+
+  // Normalize a PromptPay ID: mobile (10 digits, starts with 0), tax/citizen
+  // ID (13 digits) or e-Wallet ID (15 digits). Returns null when invalid.
+  function parsePromptPayId(id) {
+    const s = String(id || '').replace(/[\s-]/g, '');
+    if (/^0\d{9}$/.test(s)) return { type: 'phone', tag: '01', value: ('0000000000000' + '66' + s.slice(1)).slice(-13) };
+    if (/^\d{13}$/.test(s)) return { type: 'taxid', tag: '02', value: s };
+    if (/^\d{15}$/.test(s)) return { type: 'ewallet', tag: '03', value: s };
+    return null;
+  }
+
+  // EMVCo merchant-presented QR payload for Thai PromptPay (Bank of Thailand
+  // spec). amount is in satang; omit for a static QR where the payer types it.
+  function promptPayPayload(id, amountSatang) {
+    const target = parsePromptPayId(id);
+    if (!target) throw fail('promptpayId', 'Invalid PromptPay ID (use a 10-digit mobile, 13-digit tax ID or 15-digit e-Wallet ID)');
+    const f = (tag, val) => tag + String(val.length).padStart(2, '0') + val;
+    let out = f('00', '01') + f('01', amountSatang ? '12' : '11') +
+      f('29', f('00', 'A000000677010111') + f(target.tag, target.value)) +
+      f('58', 'TH') + f('53', '764');
+    if (amountSatang) {
+      if (!Number.isInteger(amountSatang) || amountSatang <= 0) throw fail('amount', 'Invalid amount', { v: amountSatang });
+      out += f('54', (amountSatang / 100).toFixed(2));
+    }
+    out += '6304';
+    return out + crc16(out).toString(16).toUpperCase().padStart(4, '0');
+  }
+
   const api = {
-    toCents, formatCents, addToCart, setQty, setLineDiscount, lineTotals, computeTotals, settle,
+    currencyDecimals, toMinor, formatMoney, toCents, formatCents,
+    addToCart, setQty, setLineDiscount, lineTotals, computeTotals, METHODS, settle, saleTenders,
     checkout, refund, openShift, addMovement, shiftReport, closeShift, salesReport, toCSV, salesCSV,
+    isValidThaiTaxId, crc16, parsePromptPayId, promptPayPayload,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.POS = api;
