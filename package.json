@@ -1,0 +1,7 @@
+{
+  "name": "pos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-based point of sale system",
+  "scripts": { "test": "node --test test/*.test.js" }
+}
