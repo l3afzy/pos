@@ -3,84 +3,217 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Simple POS</title>
+<title>POS Terminal</title>
 <link rel="stylesheet" href="src/styles.css">
 </head>
 <body>
-<header>
-  <h1>POS</h1>
-  <nav>
-    <button data-view="register" class="active">Register</button>
-    <button data-view="products">Products</button>
-    <button data-view="sales">Sales</button>
-    <button data-view="settings">Settings</button>
-  </nav>
-</header>
+
+<!-- Login / lock screen -->
+<section id="login" class="login">
+  <div class="login-card">
+    <h1 id="login-store">POS</h1>
+    <p class="muted">Select your name and enter your PIN</p>
+    <div id="login-staff" class="staff-pick"></div>
+    <input id="pin-display" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" aria-label="PIN">
+    <div id="keypad" class="keypad"></div>
+    <p id="login-hint" class="muted small"></p>
+  </div>
+</section>
+
+<div id="app" hidden>
+  <header class="topbar">
+    <strong id="store-name">POS</strong>
+    <nav id="nav">
+      <button data-view="register" class="active">Register <kbd>F1</kbd></button>
+      <button data-view="sales">Sales <kbd>F2</kbd></button>
+      <button data-view="shift">Shift <kbd>F3</kbd></button>
+      <button data-view="reports" data-role="manager">Reports</button>
+      <button data-view="products" data-role="manager">Products</button>
+      <button data-view="staff" data-role="manager">Staff</button>
+      <button data-view="settings" data-role="manager">Settings</button>
+    </nav>
+    <span class="spacer"></span>
+    <span id="shift-badge" class="badge"></span>
+    <span id="clock" class="muted"></span>
+    <span id="user-badge" class="badge"></span>
+    <button id="lock" title="Lock terminal (Ctrl+L)">Lock</button>
+  </header>
+
+  <main>
+    <!-- Register -->
+    <section id="view-register" class="view active">
+      <div class="catalog">
+        <div class="catalog-bar">
+          <input id="search" type="search" placeholder="Search or scan barcode/SKU and press Enter  (F4)" autocomplete="off">
+        </div>
+        <div id="categories" class="chips"></div>
+        <div id="product-grid" class="grid"></div>
+      </div>
+      <aside class="cart">
+        <div class="cart-head">
+          <h2>Current Sale</h2>
+          <div class="row tight">
+            <button id="hold" class="small">Hold</button>
+            <button id="recall" class="small">Recall <span id="held-count"></span></button>
+          </div>
+        </div>
+        <div id="no-shift" class="notice" hidden>No shift open. <button id="goto-shift" class="small primary">Open shift</button></div>
+        <table class="cart-table">
+          <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Disc%</th><th class="num">Total</th><th></th></tr></thead>
+          <tbody id="cart-lines"></tbody>
+        </table>
+        <label class="inline">Order discount %
+          <input id="order-discount" type="number" min="0" max="100" step="1" value="0">
+        </label>
+        <dl id="totals" class="totals"></dl>
+        <div class="row">
+          <button id="void-sale" class="danger">Void</button>
+          <button id="pay" class="primary big">Pay <kbd>F12</kbd></button>
+        </div>
+      </aside>
+    </section>
+
+    <!-- Sales -->
+    <section id="view-sales" class="view">
+      <div class="toolbar">
+        <h2>Sales</h2>
+        <input id="sale-search" type="search" placeholder="Find by sale ID or cashier">
+      </div>
+      <table><thead><tr><th>ID</th><th>Date</th><th>Cashier</th><th>Tender</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
+        <tbody id="sale-rows"></tbody></table>
+    </section>
+
+    <!-- Shift -->
+    <section id="view-shift" class="view">
+      <h2>Shift &amp; Cash Drawer</h2>
+      <div id="shift-panel"></div>
+      <h3>Shift history</h3>
+      <table><thead><tr><th>Opened</th><th>Closed</th><th>By</th><th class="num">Net sales</th><th class="num">Expected</th><th class="num">Counted</th><th class="num">Over/Short</th><th></th></tr></thead>
+        <tbody id="shift-rows"></tbody></table>
+    </section>
+
+    <!-- Reports -->
+    <section id="view-reports" class="view">
+      <div class="toolbar">
+        <h2>Reports</h2>
+        <label>From <input id="rep-from" type="date"></label>
+        <label>To <input id="rep-to" type="date"></label>
+        <button id="rep-today" class="small">Today</button>
+        <button id="rep-7" class="small">7 days</button>
+        <button id="rep-30" class="small">30 days</button>
+        <button id="rep-csv" class="small primary">Export CSV</button>
+      </div>
+      <div id="rep-kpis" class="kpis"></div>
+      <div class="two-col">
+        <div><h3>Top products</h3><table><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Net</th></tr></thead><tbody id="rep-products"></tbody></table></div>
+        <div>
+          <h3>By tender</h3><table><tbody id="rep-methods"></tbody></table>
+          <h3>By cashier</h3><table><thead><tr><th>Cashier</th><th class="num">Sales</th><th class="num">Total</th></tr></thead><tbody id="rep-cashiers"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Products -->
+    <section id="view-products" class="view">
+      <div class="toolbar">
+        <h2>Products</h2>
+        <input id="product-filter" type="search" placeholder="Filter products">
+        <label class="inline"><input id="low-only" type="checkbox"> Low stock only</label>
+      </div>
+      <form id="product-form" class="inline-form">
+        <input type="hidden" name="id">
+        <input name="sku" placeholder="SKU / barcode" required>
+        <input name="name" placeholder="Name" required>
+        <input name="category" placeholder="Category" list="category-list">
+        <datalist id="category-list"></datalist>
+        <input name="price" placeholder="Price (3.50)" inputmode="decimal" required>
+        <input name="stock" type="number" min="0" step="1" placeholder="Stock" required>
+        <input name="lowStock" type="number" min="0" step="1" placeholder="Low-stock alert at">
+        <button class="primary" type="submit">Save</button>
+        <button type="reset" class="ghost">Cancel</button>
+      </form>
+      <table><thead><tr><th>SKU</th><th>Name</th><th>Category</th><th class="num">Price</th><th class="num">Stock</th><th></th></tr></thead>
+        <tbody id="product-rows"></tbody></table>
+    </section>
+
+    <!-- Staff -->
+    <section id="view-staff" class="view">
+      <h2>Staff</h2>
+      <form id="staff-form" class="inline-form">
+        <input type="hidden" name="id">
+        <input name="name" placeholder="Name" required>
+        <select name="role"><option value="cashier">Cashier</option><option value="manager">Manager</option></select>
+        <input name="pin" type="password" inputmode="numeric" placeholder="PIN (4-8 digits)" autocomplete="new-password">
+        <button class="primary" type="submit">Save</button>
+        <button type="reset" class="ghost">Cancel</button>
+      </form>
+      <table><thead><tr><th>Name</th><th>Role</th><th></th></tr></thead><tbody id="staff-rows"></tbody></table>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view">
+      <h2>Settings</h2>
+      <form id="settings-form" class="stack">
+        <label>Store name <input name="storeName" required></label>
+        <label>Address / phone (receipt header) <textarea name="header" rows="2"></textarea></label>
+        <label>Receipt footer <textarea name="footer" rows="2"></textarea></label>
+        <label>Tax rate % <input name="taxRate" type="number" min="0" max="100" step="0.01" required></label>
+        <label>Max discount % a cashier may give without manager approval <input name="cashierMaxDiscount" type="number" min="0" max="100" step="1" required></label>
+        <button class="primary" type="submit">Save settings</button>
+      </form>
+      <h3>Data</h3>
+      <div class="row wrap">
+        <button id="backup">Download backup</button>
+        <label class="button">Restore backup<input id="restore" type="file" accept="application/json" hidden></label>
+        <button id="reset-data" class="danger">Reset all data</button>
+      </div>
+    </section>
+  </main>
+</div>
+
 <div id="toast" role="status" aria-live="polite"></div>
 
-<main>
-  <section id="view-register" class="view active">
-    <div class="catalog">
-      <input id="search" type="search" placeholder="Search products or scan SKU…" autocomplete="off">
-      <div id="product-grid" class="grid"></div>
-    </div>
-    <aside class="cart">
-      <h2>Current Sale</h2>
-      <ul id="cart-lines"></ul>
-      <label>Discount %
-        <input id="discount" type="number" min="0" max="100" step="1" value="0">
-      </label>
-      <dl id="totals"></dl>
-      <div class="pay">
-        <label>Cash tendered <input id="tendered" type="text" inputmode="decimal" placeholder="0.00"></label>
-        <div class="row">
-          <button id="pay-cash" class="primary">Pay Cash</button>
-          <button id="pay-card" class="primary">Pay Card</button>
-        </div>
-        <button id="clear-cart" class="ghost">Clear sale</button>
-      </div>
-    </aside>
-  </section>
+<!-- Payment -->
+<dialog id="pay-dialog">
+  <h2>Payment</h2>
+  <dl class="totals">
+    <dt>Total</dt><dd id="pay-total"></dd>
+    <dt>Paid</dt><dd id="pay-paid"></dd>
+    <dt class="grand" id="pay-due-label">Balance due</dt><dd class="grand" id="pay-due"></dd>
+  </dl>
+  <ul id="pay-list" class="pay-list"></ul>
+  <label>Amount <input id="pay-amount" inputmode="decimal" autocomplete="off"></label>
+  <div id="quick-cash" class="chips"></div>
+  <div class="row">
+    <button id="add-cash" class="big">Cash</button>
+    <button id="add-card" class="big">Card</button>
+  </div>
+  <div class="row">
+    <button id="pay-cancel" class="ghost">Cancel</button>
+    <button id="pay-complete" class="primary big">Complete sale</button>
+  </div>
+</dialog>
 
-  <section id="view-products" class="view">
-    <h2>Products</h2>
-    <form id="product-form" class="inline-form">
-      <input type="hidden" name="id">
-      <input name="sku" placeholder="SKU" required>
-      <input name="name" placeholder="Name" required>
-      <input name="price" placeholder="Price (e.g. 3.50)" inputmode="decimal" required>
-      <input name="stock" type="number" min="0" step="1" placeholder="Stock" required>
-      <button class="primary" type="submit">Save</button>
-      <button type="reset" class="ghost">Cancel</button>
-    </form>
-    <table><thead><tr><th>SKU</th><th>Name</th><th>Price</th><th>Stock</th><th></th></tr></thead>
-      <tbody id="product-rows"></tbody></table>
-  </section>
-
-  <section id="view-sales" class="view">
-    <h2>Sales</h2>
-    <div id="summary" class="summary"></div>
-    <table><thead><tr><th>ID</th><th>Date</th><th>Method</th><th>Total</th><th>Status</th><th></th></tr></thead>
-      <tbody id="sale-rows"></tbody></table>
-  </section>
-
-  <section id="view-settings" class="view">
-    <h2>Settings</h2>
-    <form id="settings-form" class="stack">
-      <label>Store name <input name="storeName" required></label>
-      <label>Tax rate % <input name="taxRate" type="number" min="0" max="100" step="0.01" required></label>
-      <button class="primary" type="submit">Save settings</button>
-    </form>
-    <p><button id="reset-data" class="danger">Reset all data</button></p>
-  </section>
-</main>
-
+<!-- Receipt -->
 <dialog id="receipt-dialog">
   <pre id="receipt"></pre>
-  <div class="row">
+  <div class="row no-print">
     <button onclick="window.print()">Print</button>
     <button id="close-receipt" class="primary">Close</button>
   </div>
+</dialog>
+
+<!-- Generic prompt (manager override, amounts, etc.) -->
+<dialog id="prompt-dialog">
+  <form method="dialog" id="prompt-form">
+    <h2 id="prompt-title"></h2>
+    <p id="prompt-text" class="muted"></p>
+    <div id="prompt-fields" class="stack"></div>
+    <div class="row">
+      <button value="cancel" type="button" id="prompt-cancel" class="ghost">Cancel</button>
+      <button value="ok" class="primary">OK</button>
+    </div>
+  </form>
 </dialog>
 
 <script src="src/core.js"></script>
