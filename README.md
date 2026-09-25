@@ -5,7 +5,7 @@ A point-of-sale terminal for retail and quick-service stores that runs in the br
 ## Install
 
 ### Desktop app (recommended for a shop)
-Installers are built automatically by GitHub Actions (**Actions → Test and build desktop app → Artifacts**):
+Download the installer from the repository's **Releases** page (newest version at the top). Every change is also built by GitHub Actions (**Actions → Test and build desktop app → Artifacts**, kept 30 days).
 
 | System | File | How to install |
 |---|---|---|
@@ -41,6 +41,14 @@ npm run dist:win   # build the Windows installer (run this on Windows)
 npm run dist:mac   # build the macOS .dmg (run this on a Mac)
 npm run dist:linux # build the Linux AppImage
 ```
+
+### Publishing a release
+Set `version` in `package.json` (e.g. `4.2.0`), commit, then push a matching tag:
+```
+git tag v4.2.0
+git push origin v4.2.0
+```
+GitHub Actions tests the code, builds the Windows, macOS and Linux installers and publishes them as a Release. A tag that doesn't match `package.json` is refused.
 
 ## Features
 **Checkout**

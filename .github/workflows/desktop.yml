@@ -49,3 +49,40 @@ jobs:
             dist/*.AppImage
           if-no-files-found: error
           retention-days: 30
+
+  # Pushing a tag like v4.1.0 publishes a GitHub Release with the installers.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches package.json version
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: POS Terminal ${{ github.ref_name }}
+          files: installers/*
+          fail_on_unmatched_files: true
+          body: |
+            ## Download
+            | System | File |
+            |---|---|
+            | Windows 10/11 | `POS-Terminal-*-win-x64.exe` |
+            | macOS | `POS-Terminal-*-mac-*.dmg` |
+            | Linux | `POS-Terminal-*-linux-x86_64.AppImage` |
+
+            The installers are not code-signed. On Windows choose **More info → Run anyway**; on macOS right-click the app and choose **Open** the first time.
+
+            First start: sign in as **Manager** with PIN **1234**, choose your country, then change the PIN under **Staff**.
