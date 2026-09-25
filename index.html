@@ -30,6 +30,7 @@
       <button data-view="shift"><span data-i18n="nav.shift">Shift</span> <kbd>F3</kbd></button>
       <button data-view="reports" data-role="manager" data-i18n="nav.reports">Reports</button>
       <button data-view="products" data-role="manager" data-i18n="nav.products">Products</button>
+      <button data-view="journal" data-role="manager" data-i18n="nav.journal">Journal</button>
       <button data-view="staff" data-role="manager" data-i18n="nav.staff">Staff</button>
       <button data-view="settings" data-role="manager" data-i18n="nav.settings">Settings</button>
     </nav>
@@ -41,6 +42,7 @@
     <button id="lock" data-i18n="nav.lock">Lock</button>
   </header>
 
+  <div id="alerts" class="alerts" hidden></div>
   <main>
     <!-- Register -->
     <section id="view-register" class="view active">
@@ -87,6 +89,10 @@
     <section id="view-shift" class="view">
       <h2 data-i18n="shift.title">Shift &amp; Cash Drawer</h2>
       <div id="shift-panel"></div>
+      <h3 data-i18n="day.heading">Daily sales report (Z)</h3>
+      <div id="day-panel"></div>
+      <table><thead><tr><th data-i18n="day.zNo">Z No.</th><th data-i18n="col.date">Date</th><th data-i18n="day.range">Document numbers</th><th class="num" data-i18n="day.net">Net sales</th><th class="num" data-i18n="col.tax">Tax</th><th data-i18n="day.closedBy">Closed by</th><th></th></tr></thead>
+        <tbody id="z-rows"></tbody></table>
       <h3 data-i18n="shift.history">Shift history</h3>
       <table><thead><tr><th data-i18n="col.opened">Opened</th><th data-i18n="col.closed">Closed</th><th data-i18n="col.by">By</th><th class="num" data-i18n="col.netSales">Net sales</th><th class="num" data-i18n="col.expected">Expected</th><th class="num" data-i18n="col.counted">Counted</th><th class="num" data-i18n="col.overShort">Over/Short</th><th></th></tr></thead>
         <tbody id="shift-rows"></tbody></table>
@@ -105,6 +111,15 @@
       </div>
       <p id="rep-note" class="muted small"></p>
       <div id="rep-kpis" class="kpis"></div>
+      <div id="otr-box" class="shift-box otr" hidden>
+        <h3 data-i18n="otr.title">Output tax report (รายงานภาษีขาย)</h3>
+        <p class="muted small" data-i18n="otr.help">Monthly report in the Revenue Department layout: abbreviated tax invoices summarised per day, full tax invoices and credit notes listed individually.</p>
+        <div class="row wrap">
+          <label class="inline"><span data-i18n="otr.month">Tax month</span> <input id="otr-month" type="month"></label>
+          <button id="otr-print" class="small primary" data-i18n="btn.print">Print</button>
+          <button id="otr-csv" class="small" data-i18n="rep.csv">Export CSV</button>
+        </div>
+      </div>
       <div class="two-col">
         <div><h3 data-i18n="rep.top">Top products</h3><table><thead><tr><th data-i18n="col.product">Product</th><th class="num" data-i18n="col.qty">Qty</th><th class="num" data-i18n="col.net">Net</th></tr></thead><tbody id="rep-products"></tbody></table></div>
         <div>
@@ -136,6 +151,20 @@
       </form>
       <table><thead><tr><th data-i18n="col.sku">SKU</th><th data-i18n="col.name">Name</th><th data-i18n="col.category">Category</th><th class="num" data-i18n="col.price">Price</th><th data-i18n="col.tax">Tax</th><th class="num" data-i18n="col.stock">Stock</th><th></th></tr></thead>
         <tbody id="product-rows"></tbody></table>
+    </section>
+
+    <!-- Journal -->
+    <section id="view-journal" class="view">
+      <div class="toolbar">
+        <h2 data-i18n="nav.journal">Journal</h2>
+        <label><span data-i18n="col.date">Date</span> <input id="journal-day" type="date"></label>
+        <button id="journal-verify" class="small" data-i18n="journal.verify">Verify</button>
+        <button id="journal-export" class="small" data-i18n="journal.export">Export journal</button>
+      </div>
+      <p class="muted small" data-i18n="journal.help">Every document and cash event is recorded here in order. Each entry is sealed with a SHA-256 hash of the previous one, so any change or deletion is detected.</p>
+      <div id="journal-status" class="alert"></div>
+      <table><thead><tr><th>#</th><th data-i18n="col.date">Date</th><th data-i18n="journal.type">Type</th><th data-i18n="col.no">No.</th><th class="num" data-i18n="col.total">Total</th><th data-i18n="col.by">By</th><th data-i18n="journal.hash">Hash</th></tr></thead>
+        <tbody id="journal-rows"></tbody></table>
     </section>
 
     <!-- Staff -->
@@ -186,6 +215,10 @@
           <label><span data-i18n="set.branch">Branch (สำนักงานใหญ่ or 5-digit branch no.)</span> <input name="branch"></label>
           <label><span data-i18n="set.posReg">POS registration no. (from Revenue Dept.)</span> <input name="posRegNo"></label>
           <label><span data-i18n="set.promptpay">PromptPay ID (mobile / tax ID / e-Wallet; blank = off)</span> <input name="promptpayId" inputmode="numeric"></label>
+          <label><span data-i18n="set.machineBrand">Computer brand (for ภ.พ.06)</span> <input name="machineBrand"></label>
+          <label><span data-i18n="set.machineModel">Computer model (for ภ.พ.06)</span> <input name="machineModel"></label>
+          <label><span data-i18n="set.machineSerial">Computer serial number (for ภ.พ.06)</span> <input name="machineSerial"></label>
+          <button type="button" id="pp06" class="small" data-i18n="set.pp06">Print ภ.พ.06 attachments</button>
         </fieldset>
         <fieldset>
           <legend data-i18n="set.store">Store &amp; receipts</legend>
@@ -197,6 +230,7 @@
         <div><button class="primary" type="submit" data-i18n="set.save">Save settings</button></div>
       </form>
       <h3 data-i18n="set.data">Data</h3>
+      <p id="storage-info" class="muted small"></p>
       <div class="row wrap">
         <button id="backup" data-i18n="set.backup">Download backup</button>
         <label class="button"><span data-i18n="set.restore">Restore backup</span><input id="restore" type="file" accept="application/json" hidden></label>
@@ -207,6 +241,7 @@
 </div>
 
 <div id="toast" role="status" aria-live="polite"></div>
+<div id="report-print" class="report-print"></div>
 
 <!-- Payment -->
 <dialog id="pay-dialog">
@@ -268,6 +303,7 @@
 <script src="src/vendor/qrcode.js"></script>
 <script src="src/i18n.js"></script>
 <script src="src/core.js"></script>
+<script src="src/storage.js"></script>
 <script src="src/app.js"></script>
 </body>
 </html>

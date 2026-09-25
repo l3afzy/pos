@@ -114,6 +114,7 @@ test('sales report aggregates and filters by date', () => {
 
 test('CSV escapes quotes and formula injection', () => {
   assert.equal(P.toCSV([['a,b', 'say "hi"', '=SUM(A1)']]), '"a,b","say ""hi""",\'=SUM(A1)');
+  assert.equal(P.toCSV([['-112.15', -7.85, '-1+1', '@x']]), "-112.15,-7.85,'-1+1,'@x");
   const cart = P.addToCart([], products[0], 1);
   const s = P.checkout({ cart, products, payments: [{ method: 'cash', amount: 350 }], id: 'S1', now: 0 }).sale;
   assert.match(P.salesCSV([s]).split('\r\n')[1], /^S1,1970-01-01T00:00:00.000Z,USD,,1,3.50,0.00,0.00,no,3.50,3.50,0.00,0.00,Completed,,$/);
@@ -196,4 +197,111 @@ test('refund carries document number', () => {
   const r = P.checkout({ cart, products, payments: [{ method: 'card', amount: 350 }], currency: 'THB' });
   assert.equal(r.sale.currency, 'THB');
   assert.equal(P.refund(r.sale, r.products, { id: 'CN000001' }).sale.refund.id, 'CN000001');
+});
+
+// ---- Thai compliance: journal, voids, daily summary, output tax report ----
+const crypto = require('node:crypto');
+const dayOf = iso => iso.slice(0, 10); // UTC days for tests
+const TH_SELLER = { country: 'TH', taxId: '1234567890121', posRegNo: 'E0512345', name: 'Shop' };
+
+function thSale(id, date, price, { taxable = true, method = 'cash' } = {}) {
+  const prods = [{ id: 'x', name: 'X', price, stock: 99, taxable }];
+  const cart = P.addToCart([], prods[0], 1);
+  const r = P.checkout({ cart, products: prods, tax: { rateBp: 700, inclusive: true }, currency: 'THB',
+    payments: [{ method, amount: price }], id, now: Date.parse(date), shiftId: 'SH1' });
+  return { ...r.sale, seller: TH_SELLER, taxLabel: 'VAT' };
+}
+
+test('sha256 matches node crypto', () => {
+  for (const s of ['', 'abc', 'ใบกำกับภาษีอย่างย่อ', 'x'.repeat(119)]) {
+    assert.equal(P.sha256(s), crypto.createHash('sha256').update(s, 'utf8').digest('hex'));
+  }
+});
+
+test('stableStringify ignores key order and undefined', () => {
+  assert.equal(P.stableStringify({ b: 1, a: [1, { d: undefined, c: 'x' }] }), '{"a":[1,{"c":"x"}],"b":1}');
+  assert.equal(P.stableStringify({ a: 1, b: 2 }), P.stableStringify({ b: 2, a: 1 }));
+});
+
+test('journal hash chain detects tampering, deletion and reordering', () => {
+  const j = [];
+  for (let i = 0; i < 4; i++) j.push(P.journalEntry(j[j.length - 1], { type: 'sale', ref: 'S' + i, amount: 100 * i, doc: { n: i }, now: 1000 * i }));
+  assert.deepEqual(P.verifyJournal(j), { ok: true, count: 4, last: j[3].hash });
+  const edited = j.map(e => ({ ...e }));
+  edited[1] = { ...edited[1], amount: 999 };
+  assert.deepEqual(P.verifyJournal(edited), { ok: false, seq: 2, reason: 'hash' });
+  assert.equal(P.verifyJournal([j[0], j[2], j[3]]).ok, false);
+  assert.equal(P.verifyJournal([j[1], j[0]]).ok, false);
+  // survives a JSON round trip (backup/restore)
+  assert.equal(P.verifyJournal(JSON.parse(JSON.stringify(j))).ok, true);
+});
+
+test('void keeps the record, restores stock, excluded from shift and reports', () => {
+  const s = thSale('S000001', '2026-09-01T03:00:00Z', 10700);
+  const prods = [{ id: 'x', name: 'X', price: 10700, stock: 98 }];
+  assert.throws(() => P.voidSale(s, prods, { reason: ' ' }), /reason/);
+  const v = P.voidSale(s, prods, { by: 'Mgr', reason: 'wrong item', now: Date.parse('2026-09-01T03:05:00Z') });
+  assert.equal(v.products[0].stock, 99);
+  assert.equal(v.sale.voided.reason, 'wrong item');
+  assert.equal(P.saleStatus(v.sale), 'voided');
+  assert.throws(() => P.voidSale(v.sale, prods, { reason: 'x' }));
+  assert.throws(() => P.refund(v.sale, prods));
+  const shift = P.openShift({ id: 'SH1', cashier: 'A', float: 0, currency: 'THB' });
+  const rep = P.shiftReport(shift, [v.sale]);
+  assert.equal(rep.transactions, 0);
+  assert.equal(rep.voidCount, 1);
+  assert.equal(rep.expectedCash, 0);
+  assert.equal(P.salesReport([v.sale]).revenue, 0);
+  assert.equal(P.salesReport([v.sale]).voids, 1);
+  const inv = { ...s, fullInvoice: { no: 'INV1' } };
+  assert.throws(() => P.voidSale(inv, prods, { reason: 'x' }), /replaced/);
+});
+
+test('daily summary: number range, voids, VAT split, credit notes, invoices', () => {
+  const a = thSale('S000001', '2026-09-01T03:00:00Z', 10700);
+  const b = { ...thSale('S000002', '2026-09-01T04:00:00Z', 5350, { method: 'promptpay' }), voided: { reason: 'err' } };
+  const c = thSale('S000003', '2026-09-01T05:00:00Z', 3500, { taxable: false });
+  const d = { ...thSale('S000004', '2026-09-01T06:00:00Z', 2140), fullInvoice: { no: 'INV000001', date: '2026-09-01T06:00:00Z', issuedAt: '2026-09-01T07:00:00Z' } };
+  const e = { ...thSale('S000005', '2026-08-31T06:00:00Z', 1070), refunded: true, refund: { id: 'CN000001', date: '2026-09-01T08:00:00Z' } };
+  const sum = P.daySummary({ sales: [e, d, c, b, a], day: '2026-09-01', dayOf });
+  assert.equal(sum.count, 4);
+  assert.equal(sum.firstNo, 'S000001');
+  assert.equal(sum.lastNo, 'S000004');
+  assert.deepEqual(sum.voided.map(x => x.id), ['S000002']);
+  assert.deepEqual(sum.replaced, [{ id: 'S000004', invoice: 'INV000001' }]);
+  assert.equal(sum.total, 10700 + 3500 + 2140);
+  assert.equal(sum.tax, 700 + 140);
+  assert.equal(sum.taxBase, 10000 + 2000);
+  assert.equal(sum.exempt, 3500);
+  assert.equal(sum.taxBase + sum.tax + sum.exempt, sum.total);
+  assert.deepEqual(sum.creditNotes.map(x => x.id), ['CN000001']);
+  assert.equal(sum.cnTax, 70);
+  assert.equal(sum.net, sum.total - 1070);
+  assert.deepEqual(sum.invoices, [{ no: 'INV000001', saleId: 'S000004', total: 2140 }]);
+  assert.deepEqual(sum.paymentsBy, { cash: 10700 + 3500 + 2140 });
+});
+
+test('output tax report: ABB ranges exclude voided/replaced, invoices and credit notes listed', () => {
+  const a = thSale('S000001', '2026-09-01T03:00:00Z', 10700);
+  const b = { ...thSale('S000002', '2026-09-01T04:00:00Z', 5350), voided: { reason: 'err' } };
+  const d = { ...thSale('S000003', '2026-09-01T06:00:00Z', 2140), fullInvoice: { no: 'INV000001', date: '2026-09-01T06:00:00Z', buyer: { name: 'ACME', taxId: '1234567890121', branch: 'สำนักงานใหญ่' } } };
+  const f = thSale('S000004', '2026-09-02T03:00:00Z', 1070);
+  const e = { ...thSale('S000005', '2026-09-02T04:00:00Z', 1070), refunded: true, refund: { id: 'CN000001', date: '2026-09-03T08:00:00Z' } };
+  const other = thSale('S000006', '2026-10-01T03:00:00Z', 1070);
+  const r = P.outputTaxReport({ sales: [other, e, f, d, b, a], month: '2026-09', dayOf, currency: 'THB' });
+  assert.deepEqual(r.rows.map(x => [x.day, x.type, x.docNo]), [
+    ['2026-09-01', 'abb', 'S000001-S000003'],
+    ['2026-09-01', 'invoice', 'INV000001'],
+    ['2026-09-02', 'abb', 'S000004-S000005'],
+    ['2026-09-03', 'credit', 'CN000001'],
+  ]);
+  assert.deepEqual(r.rows[0].excluded, [{ id: 'S000002', why: 'voided', invoice: null }, { id: 'S000003', why: 'replaced', invoice: 'INV000001' }]);
+  assert.equal(r.rows[0].taxBase, 10000);
+  assert.equal(r.rows[1].taxBase, 2000);
+  assert.equal(r.rows[1].buyerTaxId, '1234567890121');
+  assert.equal(r.rows[3].tax, -70);
+  assert.deepEqual(r.totals, { taxBase: 10000 + 2000 + 2000 - 1000, tax: 700 + 140 + 140 - 70, exempt: 0 });
+  // receipts issued before POS approval are reported separately
+  const pre = { ...thSale('S000009', '2026-09-05T03:00:00Z', 1070), seller: { ...TH_SELLER, posRegNo: '' } };
+  assert.equal(P.outputTaxReport({ sales: [pre], month: '2026-09', dayOf }).rows[0].type, 'receipt');
 });

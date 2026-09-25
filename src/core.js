@@ -190,6 +190,7 @@
   // Refunds go back to the original tenders.
   function refund(sale, products, { by, shiftId, id, now = Date.now() } = {}) {
     if (sale.refunded) throw fail('refunded', 'Sale already refunded');
+    if (sale.voided) throw fail('voided', 'Sale was voided');
     const updatedProducts = products.map(p => {
       const line = sale.lines.find(l => l.id === p.id);
       return line ? { ...p, stock: p.stock + line.qty } : p;
@@ -198,6 +199,30 @@
       sale: { ...sale, refunded: true, refund: { id: id || null, date: new Date(now).toISOString(), by: by || null, shiftId: shiftId || null } },
       products: updatedProducts,
     };
+  }
+
+  // Void (cancel) a receipt/abbreviated tax invoice that was issued in error.
+  // The document number stays used and the record is kept, marked voided.
+  function voidSale(sale, products, { by, reason, now = Date.now() } = {}) {
+    if (sale.voided) throw fail('voided', 'Sale was voided');
+    if (sale.refunded) throw fail('refunded', 'Sale already refunded');
+    if (sale.fullInvoice) throw fail('replaced', 'Sale was replaced by a full tax invoice');
+    if (!reason || !String(reason).trim()) throw fail('reason', 'A reason is required');
+    const updatedProducts = products.map(p => {
+      const line = sale.lines.find(l => l.id === p.id);
+      return line ? { ...p, stock: p.stock + line.qty } : p;
+    });
+    return {
+      sale: { ...sale, voided: { date: new Date(now).toISOString(), by: by || null, reason: String(reason).trim() } },
+      products: updatedProducts,
+    };
+  }
+
+  function saleStatus(s) {
+    if (s.voided) return 'voided';
+    if (s.refunded) return 'refunded';
+    if (s.fullInvoice) return 'replaced';
+    return 'completed';
   }
 
   // ------------------------------------------------------------ shifts ---
@@ -220,7 +245,8 @@
   }
 
   function shiftReport(shift, sales) {
-    const inShift = sales.filter(s => s.shiftId === shift.id);
+    const inShift = sales.filter(s => s.shiftId === shift.id && !s.voided);
+    const voidCount = sales.filter(s => s.shiftId === shift.id && s.voided).length;
     const refundsInShift = sales.filter(s => s.refunded && s.refund && s.refund.shiftId === shift.id);
     const sum = (arr, f) => arr.reduce((a, x) => a + f(x), 0);
     const salesBy = inShift.reduce((m, s) => addTo(m, saleTenders(s)), {});
@@ -232,7 +258,7 @@
     const grossSales = sum(inShift, s => s.total);
     const refundTotal = sum(refundsInShift, s => s.total);
     return {
-      transactions: inShift.length, grossSales,
+      transactions: inShift.length, grossSales, voidCount,
       tax: sum(inShift, s => s.tax) - sum(refundsInShift, s => s.tax),
       discounts: sum(inShift, s => s.discount || 0),
       salesBy, refundsBy,
@@ -257,7 +283,7 @@
   // Refunded sales are excluded from revenue.
   function salesReport(sales, { from, to, currency } = {}) {
     const inRange = sales.filter(s => (!from || s.date >= from) && (!to || s.date < to) && (!currency || (s.currency || 'USD') === currency));
-    const valid = inRange.filter(s => !s.refunded);
+    const valid = inRange.filter(s => !s.refunded && !s.voided);
     const byMethod = {};
     const byCashier = {};
     const byProduct = {};
@@ -277,7 +303,7 @@
     }
     const topProducts = Object.values(byProduct).sort((a, b) => b.net - a.net || b.qty - a.qty);
     return {
-      count: valid.length, refunds: inRange.length - valid.length, revenue, tax, discounts, items,
+      count: valid.length, refunds: inRange.filter(s => s.refunded).length, voids: inRange.filter(s => s.voided).length, revenue, tax, discounts, items,
       average: valid.length ? roundDiv(revenue, valid.length) : 0,
       byMethod, byCashier, topProducts,
     };
@@ -285,7 +311,9 @@
 
   function csvEscape(v) {
     let s = v == null ? '' : String(v);
-    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // guard against spreadsheet formula injection
+    // Guard against spreadsheet formula injection, but keep plain numbers
+    // (including negatives such as credit note amounts) numeric.
+    if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
 
@@ -302,10 +330,166 @@
       const t = saleTenders(s);
       rows.push([s.id, s.date, cur, s.cashier || '', s.lines.reduce((a, l) => a + l.qty, 0),
         amt(s.subtotal), amt(s.discount), amt(s.tax), s.taxInclusive ? 'yes' : 'no', amt(s.total),
-        amt(t.cash), amt(t.card), amt(t.promptpay), s.refunded ? 'Refunded' : 'Completed',
+        amt(t.cash), amt(t.card), amt(t.promptpay), { voided: 'Voided', refunded: 'Refunded', replaced: 'Completed', completed: 'Completed' }[saleStatus(s)],
         s.fullInvoice ? s.fullInvoice.no : '', s.refund && s.refund.id ? s.refund.id : '']);
     }
     return toCSV(rows);
+  }
+
+  // -------------------------------------------------- journal & hashing ---
+  // SHA-256 in plain JS so it works synchronously everywhere (incl. file://
+  // pages without WebCrypto). Constants are derived from primes as per FIPS 180-4.
+  const SHA_K = [], SHA_H = [];
+  (function () {
+    const frac = x => ((x - Math.floor(x)) * 4294967296) >>> 0;
+    for (let n = 2, found = 0; found < 64; n++) {
+      let prime = true;
+      for (let d = 2; d * d <= n; d++) if (n % d === 0) { prime = false; break; }
+      if (!prime) continue;
+      if (found < 8) SHA_H.push(frac(Math.sqrt(n)));
+      SHA_K.push(frac(Math.cbrt(n)));
+      found++;
+    }
+  })();
+  const ror = (x, n) => (x >>> n) | (x << (32 - n));
+
+  function sha256(str) {
+    const bytes = new TextEncoder().encode(str);
+    const len = Math.ceil((bytes.length + 9) / 64) * 64;
+    const m = new Uint8Array(len);
+    m.set(bytes);
+    m[bytes.length] = 0x80;
+    const dv = new DataView(m.buffer);
+    const bits = bytes.length * 8;
+    dv.setUint32(len - 8, Math.floor(bits / 4294967296));
+    dv.setUint32(len - 4, bits >>> 0);
+    const h = SHA_H.slice();
+    const w = new Uint32Array(64);
+    for (let off = 0; off < len; off += 64) {
+      for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const s0 = ror(w[i - 15], 7) ^ ror(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+        const s1 = ror(w[i - 2], 17) ^ ror(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      let [a, b, c, d, e, f, g, hh] = h;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (hh + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & f) ^ (~e & g)) + SHA_K[i] + w[i]) >>> 0;
+        const t2 = ((ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+        hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+      h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+    }
+    return h.map(x => x.toString(16).padStart(8, '0')).join('');
+  }
+
+  // JSON with sorted keys, so a hash does not depend on property order.
+  function stableStringify(v) {
+    if (v === null || typeof v !== 'object') return v === undefined ? 'null' : JSON.stringify(v);
+    if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+    return '{' + Object.keys(v).filter(k => v[k] !== undefined).sort()
+      .map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+  }
+
+  const GENESIS = '0'.repeat(64);
+
+  // Electronic journal: an append-only list where each entry's hash covers the
+  // previous hash, so any edit, deletion or reordering is detectable.
+  function journalEntry(prev, { type, ref = null, amount = null, by = null, doc = null, now = Date.now() }) {
+    const body = { seq: prev ? prev.seq + 1 : 1, at: new Date(now).toISOString(), type, ref, amount, by, doc };
+    const prevHash = prev ? prev.hash : GENESIS;
+    return { ...body, prev: prevHash, hash: sha256(prevHash + stableStringify(body)) };
+  }
+
+  function verifyJournal(entries) {
+    let prevHash = GENESIS;
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (e.seq !== i + 1) return { ok: false, seq: e.seq, reason: 'sequence' };
+      if (e.prev !== prevHash) return { ok: false, seq: e.seq, reason: 'chain' };
+      const { seq, at, type, ref, amount, by, doc } = e;
+      if (sha256(prevHash + stableStringify({ seq, at, type, ref, amount, by, doc })) !== e.hash) return { ok: false, seq: e.seq, reason: 'hash' };
+      prevHash = e.hash;
+    }
+    return { ok: true, count: entries.length, last: prevHash };
+  }
+
+  // ------------------------------------------------------ daily summary ---
+  const docNo = id => Number(String(id).replace(/\D/g, '')) || 0;
+  const byDocNo = (a, b) => docNo(a.id) - docNo(b.id);
+
+  // Daily sales summary for one business day (dayOf maps an ISO timestamp to
+  // the local 'YYYY-MM-DD'). Voided documents are listed but not counted.
+  function daySummary({ sales, day, dayOf }) {
+    const issued = sales.filter(s => dayOf(s.date) === day).sort(byDocNo);
+    const voided = issued.filter(s => s.voided);
+    const valid = issued.filter(s => !s.voided);
+    const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);
+    const creditNotes = sales.filter(s => s.refunded && s.refund && dayOf(s.refund.date) === day)
+      .map(s => ({ id: s.refund.id || s.id + '-R', saleId: s.id, total: s.total, taxBase: s.taxBase != null ? s.taxBase : s.total - s.tax, tax: s.tax, exempt: s.exemptAmount || 0, tenders: saleTenders(s) }))
+      .sort(byDocNo);
+    const invoices = sales.filter(s => s.fullInvoice && dayOf(s.fullInvoice.issuedAt || s.fullInvoice.date) === day)
+      .map(s => ({ no: s.fullInvoice.no, saleId: s.id, total: s.total }));
+    const paymentsBy = valid.reduce((m, s) => addTo(m, saleTenders(s)), {});
+    const refundsBy = creditNotes.reduce((m, c) => addTo(m, c.tenders), {});
+    const total = sum(valid, s => s.total);
+    const cnTotal = sum(creditNotes, c => c.total);
+    return {
+      day, count: issued.length,
+      firstNo: issued.length ? issued[0].id : null, lastNo: issued.length ? issued[issued.length - 1].id : null,
+      voided: voided.map(s => ({ id: s.id, total: s.total, reason: s.voided.reason })),
+      replaced: valid.filter(s => s.fullInvoice).map(s => ({ id: s.id, invoice: s.fullInvoice.no })),
+      taxBase: sum(valid, s => (s.taxBase != null ? s.taxBase : s.total - s.tax - (s.exemptAmount || 0))),
+      tax: sum(valid, s => s.tax), exempt: sum(valid, s => s.exemptAmount), discount: sum(valid, s => s.discount), total,
+      creditNotes, cnTaxBase: sum(creditNotes, c => c.taxBase), cnTax: sum(creditNotes, c => c.tax), cnExempt: sum(creditNotes, c => c.exempt), cnTotal,
+      invoices, paymentsBy, refundsBy, net: total - cnTotal,
+    };
+  }
+
+  // Monthly output tax report (รายงานภาษีขาย) rows for month 'YYYY-MM'.
+  // Abbreviated tax invoices are summarised per day as a number range; voided
+  // ones and ones replaced by a full tax invoice are excluded from that range's
+  // value and listed. Full tax invoices and credit notes get their own rows.
+  function outputTaxReport({ sales, month, dayOf, currency }) {
+    const cur = s => !currency || (s.currency || 'USD') === currency;
+    const inMonth = iso => dayOf(iso).slice(0, 7) === month;
+    const rows = [];
+    const days = new Map();
+    for (const s of sales.filter(x => cur(x) && inMonth(x.date))) {
+      const kind = s.seller && s.seller.country === 'TH' && s.seller.taxId && s.seller.posRegNo ? 'abb' : 'receipt';
+      const key = dayOf(s.date) + '|' + kind;
+      if (!days.has(key)) days.set(key, []);
+      days.get(key).push(s);
+    }
+    for (const [key, list] of days) {
+      const [day, kind] = key.split('|');
+      list.sort(byDocNo);
+      const counted = list.filter(s => !s.voided && !s.fullInvoice);
+      const excluded = list.filter(s => s.voided || s.fullInvoice).map(s => ({ id: s.id, why: s.voided ? 'voided' : 'replaced', invoice: s.fullInvoice ? s.fullInvoice.no : null }));
+      rows.push({
+        type: kind, day, docNo: list.length > 1 ? `${list[0].id}-${list[list.length - 1].id}` : list[0].id, excluded,
+        buyer: '', buyerTaxId: '', buyerBranch: '',
+        taxBase: counted.reduce((a, s) => a + (s.taxBase != null ? s.taxBase : s.total - s.tax), 0),
+        tax: counted.reduce((a, s) => a + s.tax, 0),
+        exempt: counted.reduce((a, s) => a + (s.exemptAmount || 0), 0),
+      });
+    }
+    for (const s of sales.filter(x => cur(x) && x.fullInvoice && !x.voided && inMonth(x.fullInvoice.date))) {
+      const b = s.fullInvoice.buyer;
+      rows.push({ type: 'invoice', day: dayOf(s.fullInvoice.date), docNo: s.fullInvoice.no, ref: s.id, buyer: b.name, buyerTaxId: b.taxId || '', buyerBranch: b.branch || '',
+        taxBase: s.taxBase, tax: s.tax, exempt: s.exemptAmount || 0 });
+    }
+    for (const s of sales.filter(x => cur(x) && x.refunded && x.refund && inMonth(x.refund.date))) {
+      const b = s.fullInvoice ? s.fullInvoice.buyer : null;
+      rows.push({ type: 'credit', day: dayOf(s.refund.date), docNo: s.refund.id || s.id + '-R', ref: s.fullInvoice ? s.fullInvoice.no : s.id,
+        buyer: b ? b.name : '', buyerTaxId: b ? b.taxId || '' : '', buyerBranch: b ? b.branch || '' : '',
+        taxBase: -(s.taxBase != null ? s.taxBase : s.total - s.tax), tax: -s.tax, exempt: -(s.exemptAmount || 0) });
+    }
+    const order = { abb: 0, receipt: 1, invoice: 2, credit: 3 };
+    rows.sort((a, b) => a.day.localeCompare(b.day) || order[a.type] - order[b.type] || docNo(a.docNo) - docNo(b.docNo));
+    const totals = rows.reduce((t, r) => ({ taxBase: t.taxBase + r.taxBase, tax: t.tax + r.tax, exempt: t.exempt + r.exempt }), { taxBase: 0, tax: 0, exempt: 0 });
+    return { month, rows, totals };
   }
 
   // --------------------------------------------------------- Thailand ---
@@ -358,8 +542,9 @@
   const api = {
     currencyDecimals, toMinor, formatMoney, toCents, formatCents,
     addToCart, setQty, setLineDiscount, lineTotals, computeTotals, METHODS, settle, saleTenders,
-    checkout, refund, openShift, addMovement, shiftReport, closeShift, salesReport, toCSV, salesCSV,
+    checkout, refund, voidSale, saleStatus, openShift, addMovement, shiftReport, closeShift, salesReport, toCSV, salesCSV,
     isValidThaiTaxId, crc16, parsePromptPayId, promptPayPayload,
+    sha256, stableStringify, journalEntry, verifyJournal, daySummary, outputTaxReport,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.POS = api;

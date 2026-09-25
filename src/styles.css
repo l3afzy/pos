@@ -157,11 +157,45 @@ dialog label { display:flex; flex-direction:column; gap:.3rem; }
 #toast.error { background:var(--danger); }
 
 @media print {
-  @page { size: 80mm auto; margin: 0; }
+  @page { margin: 0; }
   body { background:#fff; }
-  body > *:not(#receipt-dialog) { display:none !important; }
+  /* Receipts: print only the receipt dialog (80mm roll). */
+  body:not(.print-report) > *:not(#receipt-dialog) { display:none !important; }
   #receipt-dialog { position:static; border:0; box-shadow:none; width:auto; padding:0; margin:0; }
   #receipt-dialog::backdrop { display:none; }
   .receipt { padding:2mm 4mm; }
   .no-print { display:none !important; }
 }
+
+/* Alerts */
+.alerts { display:flex; flex-direction:column; gap:.35rem; padding:.5rem 1rem 0; }
+.alert { padding:.55rem .8rem; border-radius:8px; font-size:.92rem; border:1px solid transparent; }
+.alert.info { background:#e0f2fe; color:#075985; border-color:#bae6fd; }
+.alert.warn { background:#fef3c7; color:#78350f; border-color:#fde68a; }
+.alert.danger { background:#fee2e2; color:#7f1d1d; border-color:#fecaca; font-weight:600; }
+.alert.ok { background:#dcfce7; color:#14532d; border-color:#bbf7d0; }
+.alert:empty { display:none; }
+.mono { font-family:ui-monospace, monospace; font-size:.8rem; }
+td.mono button { margin-left:.4rem; }
+.receipt .mark { text-align:center; font-weight:700; border:1px solid #000; margin:3px 0; padding:1px 0; }
+.otr { max-width:none; margin-top:1rem; }
+#day-panel { margin-bottom:.75rem; }
+
+/* A4 reports (output tax report, ภ.พ.06 pack) */
+.report-print { display:none; }
+@media print {
+  /* A4 reports: print only the report container. */
+  body.print-report > *:not(#report-print) { display:none !important; }
+  body.print-report #report-print { display:block; color:#000; background:#fff; font-family:"Sarabun","Noto Sans Thai",Tahoma,sans-serif; font-size:11pt; padding:10mm; }
+}
+.rp-head h1 { font-size:16pt; text-align:center; margin:0 0 .3rem; }
+.rp-head div { margin:.1rem 0; }
+.rp-table { width:100%; border-collapse:collapse; margin:.6rem 0; box-shadow:none; background:#fff; color:#000; }
+.rp-table th, .rp-table td { border:1px solid #000; padding:3px 5px; font-size:9.5pt; color:#000; text-transform:none; letter-spacing:0; }
+.rp-table th { background:#eee; }
+.rp-table tfoot td { font-weight:700; }
+.rp-summary { border:1px solid #000; padding:.4rem .6rem; margin-top:.5rem; }
+.rp-summary h2 { font-size:12pt; margin:0 0 .3rem; }
+.rp-foot { font-size:8pt; color:#444; }
+.rp-samples { display:flex; gap:12mm; align-items:flex-start; margin-top:6mm; break-inside:avoid; }
+.rp-receipt { border:1px dashed #000; }
