@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+<title>POS Terminal</title>
+<link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+
+<!-- Login / lock screen -->
+<section id="login" class="login">
+  <div class="login-card">
+    <div class="login-top"><button class="lang-toggle small ghost" type="button"></button></div>
+    <h1 id="login-store">POS</h1>
+    <p class="muted" data-i18n="login.prompt">Select your name and enter your PIN</p>
+    <div id="login-staff" class="staff-pick"></div>
+    <input id="pin-display" type="password" inputmode="numeric" autocomplete="off" data-i18n-ph="login.pin" placeholder="PIN" aria-label="PIN">
+    <div id="keypad" class="keypad"></div>
+    <p id="login-hint" class="muted small"></p>
+  </div>
+</section>
+
+<div id="app" hidden>
+  <header class="topbar">
+    <strong id="store-name">POS</strong>
+    <nav id="nav">
+      <button data-view="register" class="active"><span data-i18n="nav.register">Register</span> <kbd>F1</kbd></button>
+      <button data-view="sales"><span data-i18n="nav.sales">Sales</span> <kbd>F2</kbd></button>
+      <button data-view="shift"><span data-i18n="nav.shift">Shift</span> <kbd>F3</kbd></button>
+      <button data-view="reports" data-role="manager" data-i18n="nav.reports">Reports</button>
+      <button data-view="products" data-role="manager" data-i18n="nav.products">Products</button>
+      <button data-view="journal" data-role="manager" data-i18n="nav.journal">Journal</button>
+      <button data-view="staff" data-role="manager" data-i18n="nav.staff">Staff</button>
+      <button data-view="settings" data-role="manager" data-i18n="nav.settings">Settings</button>
+    </nav>
+    <span class="spacer"></span>
+    <span id="shift-badge" class="badge"></span>
+    <span id="clock" class="muted"></span>
+    <span id="user-badge" class="badge"></span>
+    <button class="lang-toggle small" type="button"></button>
+    <button id="lock" data-i18n="nav.lock">Lock</button>
+  </header>
+
+  <div id="alerts" class="alerts" hidden></div>
+  <main>
+    <!-- Register -->
+    <section id="view-register" class="view active">
+      <div class="catalog">
+        <input id="search" type="search" data-i18n-ph="reg.search" autocomplete="off">
+        <div id="categories" class="chips"></div>
+        <div id="product-grid" class="grid"></div>
+      </div>
+      <aside class="cart">
+        <div class="cart-head">
+          <h2 data-i18n="reg.current">Current Sale</h2>
+          <div class="row tight">
+            <button id="hold" class="small" data-i18n="reg.hold">Hold</button>
+            <button id="recall" class="small"><span data-i18n="reg.recall">Recall</span> <span id="held-count"></span></button>
+          </div>
+        </div>
+        <div id="no-shift" class="notice" hidden><span data-i18n="reg.noShift">No shift open.</span> <button id="goto-shift" class="small primary" data-i18n="shift.open">Open shift</button></div>
+        <table class="cart-table">
+          <thead><tr><th data-i18n="col.item">Item</th><th class="num" data-i18n="col.qty">Qty</th><th class="num" data-i18n="col.disc">Disc%</th><th class="num" data-i18n="col.total">Total</th><th></th></tr></thead>
+          <tbody id="cart-lines"></tbody>
+        </table>
+        <label class="inline"><span data-i18n="reg.orderDiscount">Order discount %</span>
+          <input id="order-discount" type="number" min="0" max="100" step="1" value="0">
+        </label>
+        <dl id="totals" class="totals"></dl>
+        <div class="row">
+          <button id="void-sale" class="danger" data-i18n="reg.void">Void</button>
+          <button id="pay" class="primary big"><span data-i18n="reg.pay">Pay</span> <kbd>F12</kbd></button>
+        </div>
+      </aside>
+    </section>
+
+    <!-- Sales -->
+    <section id="view-sales" class="view">
+      <div class="toolbar">
+        <h2 data-i18n="nav.sales">Sales</h2>
+        <input id="sale-search" type="search" data-i18n-ph="sales.search">
+      </div>
+      <table><thead><tr><th data-i18n="col.no">No.</th><th data-i18n="col.date">Date</th><th data-i18n="col.cashier">Cashier</th><th data-i18n="col.tender">Tender</th><th class="num" data-i18n="col.total">Total</th><th data-i18n="col.status">Status</th><th></th></tr></thead>
+        <tbody id="sale-rows"></tbody></table>
+    </section>
+
+    <!-- Shift -->
+    <section id="view-shift" class="view">
+      <h2 data-i18n="shift.title">Shift &amp; Cash Drawer</h2>
+      <div id="shift-panel"></div>
+      <h3 data-i18n="day.heading">Daily sales report (Z)</h3>
+      <div id="day-panel"></div>
+      <table><thead><tr><th data-i18n="day.zNo">Z No.</th><th data-i18n="col.date">Date</th><th data-i18n="day.range">Document numbers</th><th class="num" data-i18n="day.net">Net sales</th><th class="num" data-i18n="col.tax">Tax</th><th data-i18n="day.closedBy">Closed by</th><th></th></tr></thead>
+        <tbody id="z-rows"></tbody></table>
+      <h3 data-i18n="shift.history">Shift history</h3>
+      <table><thead><tr><th data-i18n="col.opened">Opened</th><th data-i18n="col.closed">Closed</th><th data-i18n="col.by">By</th><th class="num" data-i18n="col.netSales">Net sales</th><th class="num" data-i18n="col.expected">Expected</th><th class="num" data-i18n="col.counted">Counted</th><th class="num" data-i18n="col.overShort">Over/Short</th><th></th></tr></thead>
+        <tbody id="shift-rows"></tbody></table>
+    </section>
+
+    <!-- Reports -->
+    <section id="view-reports" class="view">
+      <div class="toolbar">
+        <h2 data-i18n="nav.reports">Reports</h2>
+        <label><span data-i18n="rep.from">From</span> <input id="rep-from" type="date"></label>
+        <label><span data-i18n="rep.to">To</span> <input id="rep-to" type="date"></label>
+        <button id="rep-today" class="small" data-i18n="rep.today">Today</button>
+        <button id="rep-7" class="small" data-i18n="rep.7">7 days</button>
+        <button id="rep-30" class="small" data-i18n="rep.30">30 days</button>
+        <button id="rep-csv" class="small primary" data-i18n="rep.csv">Export CSV</button>
+      </div>
+      <p id="rep-note" class="muted small"></p>
+      <div id="rep-kpis" class="kpis"></div>
+      <div id="otr-box" class="shift-box otr" hidden>
+        <h3 data-i18n="otr.title">Output tax report (รายงานภาษีขาย)</h3>
+        <p class="muted small" data-i18n="otr.help">Monthly report in the Revenue Department layout: abbreviated tax invoices summarised per day, full tax invoices and credit notes listed individually.</p>
+        <div class="row wrap">
+          <label class="inline"><span data-i18n="otr.month">Tax month</span> <input id="otr-month" type="month"></label>
+          <button id="otr-print" class="small primary" data-i18n="btn.print">Print</button>
+          <button id="otr-csv" class="small" data-i18n="rep.csv">Export CSV</button>
+        </div>
+      </div>
+      <div class="two-col">
+        <div><h3 data-i18n="rep.top">Top products</h3><table><thead><tr><th data-i18n="col.product">Product</th><th class="num" data-i18n="col.qty">Qty</th><th class="num" data-i18n="col.net">Net</th></tr></thead><tbody id="rep-products"></tbody></table></div>
+        <div>
+          <h3 data-i18n="rep.byTender">By tender</h3><table><tbody id="rep-methods"></tbody></table>
+          <h3 data-i18n="rep.byCashier">By cashier</h3><table><thead><tr><th data-i18n="col.cashier">Cashier</th><th class="num" data-i18n="col.sales">Sales</th><th class="num" data-i18n="col.total">Total</th></tr></thead><tbody id="rep-cashiers"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Products -->
+    <section id="view-products" class="view">
+      <div class="toolbar">
+        <h2 data-i18n="nav.products">Products</h2>
+        <input id="product-filter" type="search" data-i18n-ph="prod.filter">
+        <label class="inline"><input id="low-only" type="checkbox"> <span data-i18n="prod.lowOnly">Low stock only</span></label>
+      </div>
+      <form id="product-form" class="inline-form">
+        <input type="hidden" name="id">
+        <input name="sku" data-i18n-ph="prod.sku" required>
+        <input name="name" data-i18n-ph="prod.name" required>
+        <input name="category" data-i18n-ph="prod.category" list="category-list">
+        <datalist id="category-list"></datalist>
+        <input name="price" data-i18n-ph="prod.price" inputmode="decimal" required>
+        <input name="stock" type="number" min="0" step="1" data-i18n-ph="prod.stock" required>
+        <input name="lowStock" type="number" min="0" step="1" data-i18n-ph="prod.lowStock">
+        <label class="check"><input name="taxable" type="checkbox" checked> <span data-i18n="prod.taxable">Taxable</span></label>
+        <button class="primary" type="submit" data-i18n="btn.save">Save</button>
+        <button type="reset" class="ghost" data-i18n="btn.cancel">Cancel</button>
+      </form>
+      <table><thead><tr><th data-i18n="col.sku">SKU</th><th data-i18n="col.name">Name</th><th data-i18n="col.category">Category</th><th class="num" data-i18n="col.price">Price</th><th data-i18n="col.tax">Tax</th><th class="num" data-i18n="col.stock">Stock</th><th></th></tr></thead>
+        <tbody id="product-rows"></tbody></table>
+    </section>
+
+    <!-- Journal -->
+    <section id="view-journal" class="view">
+      <div class="toolbar">
+        <h2 data-i18n="nav.journal">Journal</h2>
+        <label><span data-i18n="col.date">Date</span> <input id="journal-day" type="date"></label>
+        <button id="journal-verify" class="small" data-i18n="journal.verify">Verify</button>
+        <button id="journal-export" class="small" data-i18n="journal.export">Export journal</button>
+      </div>
+      <p class="muted small" data-i18n="journal.help">Every document and cash event is recorded here in order. Each entry is sealed with a SHA-256 hash of the previous one, so any change or deletion is detected.</p>
+      <div id="journal-status" class="alert"></div>
+      <table><thead><tr><th>#</th><th data-i18n="col.date">Date</th><th data-i18n="journal.type">Type</th><th data-i18n="col.no">No.</th><th class="num" data-i18n="col.total">Total</th><th data-i18n="col.by">By</th><th data-i18n="journal.hash">Hash</th></tr></thead>
+        <tbody id="journal-rows"></tbody></table>
+    </section>
+
+    <!-- Staff -->
+    <section id="view-staff" class="view">
+      <h2 data-i18n="nav.staff">Staff</h2>
+      <form id="staff-form" class="inline-form">
+        <input type="hidden" name="id">
+        <input name="name" data-i18n-ph="staff.name" required>
+        <select name="role"><option value="cashier" data-i18n="role.cashier">Cashier</option><option value="manager" data-i18n="role.manager">Manager</option></select>
+        <input name="pin" type="password" inputmode="numeric" data-i18n-ph="staff.pin" autocomplete="new-password">
+        <button class="primary" type="submit" data-i18n="btn.save">Save</button>
+        <button type="reset" class="ghost" data-i18n="btn.cancel">Cancel</button>
+      </form>
+      <table><thead><tr><th data-i18n="col.name">Name</th><th data-i18n="col.role">Role</th><th></th></tr></thead><tbody id="staff-rows"></tbody></table>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view">
+      <h2 data-i18n="nav.settings">Settings</h2>
+      <form id="settings-form" class="settings">
+        <fieldset>
+          <legend data-i18n="set.region">Region &amp; tax</legend>
+          <label><span data-i18n="set.preset">Country profile</span>
+            <select name="country">
+              <option value="TH" data-i18n="country.TH">Thailand</option>
+              <option value="US" data-i18n="country.US">United States</option>
+              <option value="OTHER" data-i18n="country.OTHER">Other / custom</option>
+            </select>
+          </label>
+          <label><span data-i18n="set.language">Receipt &amp; default language</span>
+            <select name="language"><option value="th">ไทย</option><option value="en">English</option></select>
+          </label>
+          <label><span data-i18n="set.currency">Currency (ISO code)</span> <input name="currency" maxlength="3" required></label>
+          <label><span data-i18n="set.locale">Number/date format (locale)</span> <input name="locale" required></label>
+          <label><span data-i18n="set.taxMode">Prices</span>
+            <select name="taxMode">
+              <option value="inclusive" data-i18n="set.inclusive">Include tax (VAT/GST)</option>
+              <option value="exclusive" data-i18n="set.exclusive">Exclude tax (added at checkout)</option>
+            </select>
+          </label>
+          <label><span data-i18n="set.taxLabel">Tax name</span> <input name="taxLabel" required></label>
+          <label><span data-i18n="set.taxRate">Tax rate %</span> <input name="taxRate" type="number" min="0" max="100" step="0.01" required></label>
+          <label><span data-i18n="set.taxId">Tax ID / VAT no. (blank if not registered)</span> <input name="taxId"></label>
+          <label><span data-i18n="set.denoms">Quick cash notes (comma separated)</span> <input name="cashDenoms"></label>
+        </fieldset>
+        <fieldset id="th-fields">
+          <legend data-i18n="set.thai">Thailand: tax invoice &amp; PromptPay</legend>
+          <label><span data-i18n="set.branch">Branch (สำนักงานใหญ่ or 5-digit branch no.)</span> <input name="branch"></label>
+          <label><span data-i18n="set.posReg">POS registration no. (from Revenue Dept.)</span> <input name="posRegNo"></label>
+          <label><span data-i18n="set.promptpay">PromptPay ID (mobile / tax ID / e-Wallet; blank = off)</span> <input name="promptpayId" inputmode="numeric"></label>
+          <label><span data-i18n="set.machineBrand">Computer brand (for ภ.พ.06)</span> <input name="machineBrand"></label>
+          <label><span data-i18n="set.machineModel">Computer model (for ภ.พ.06)</span> <input name="machineModel"></label>
+          <label><span data-i18n="set.machineSerial">Computer serial number (for ภ.พ.06)</span> <input name="machineSerial"></label>
+          <button type="button" id="pp06" class="small" data-i18n="set.pp06">Print ภ.พ.06 attachments</button>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="set.store">Store &amp; receipts</legend>
+          <label><span data-i18n="set.storeName">Store name</span> <input name="storeName" required></label>
+          <label><span data-i18n="set.header">Address / phone (receipt header)</span> <textarea name="header" rows="2"></textarea></label>
+          <label><span data-i18n="set.footer">Receipt footer</span> <textarea name="footer" rows="2"></textarea></label>
+          <label><span data-i18n="set.maxDisc">Max discount % a cashier may give without manager approval</span> <input name="cashierMaxDiscount" type="number" min="0" max="100" step="1" required></label>
+        </fieldset>
+        <div><button class="primary" type="submit" data-i18n="set.save">Save settings</button></div>
+      </form>
+      <form id="hw-form" class="settings hw" hidden>
+        <fieldset>
+          <legend data-i18n="hw.title">Hardware (desktop app)</legend>
+          <label><span data-i18n="hw.receiptPrinter">Receipt printer</span> <select name="receiptPrinter"></select></label>
+          <label class="check"><input name="autoPrint" type="checkbox"> <span data-i18n="hw.autoPrint">Print receipts automatically (no dialog)</span></label>
+          <label><span data-i18n="hw.reportPrinter">Report printer (A4)</span> <select name="reportPrinter"></select></label>
+          <label><span data-i18n="hw.drawer">Cash drawer</span>
+            <select name="drawerMode">
+              <option value="none" data-i18n="hw.drawerNone">None / opened by printer driver</option>
+              <option value="network" data-i18n="hw.drawerNetwork">Network receipt printer (IP, port 9100)</option>
+              <option value="share" data-i18n="hw.drawerShare">USB printer shared in Windows (share name)</option>
+            </select>
+          </label>
+          <label class="hw-net"><span data-i18n="hw.host">Printer IP address</span> <input name="drawerHost" placeholder="192.168.1.100"></label>
+          <label class="hw-net"><span data-i18n="hw.port">Port</span> <input name="drawerPort" type="number" min="1" max="65535"></label>
+          <label class="hw-share"><span data-i18n="hw.share">Windows printer share name</span> <input name="drawerShare" placeholder="RECEIPT"></label>
+          <div class="row wrap">
+            <button type="button" id="hw-test-print" class="small" data-i18n="hw.testPrint">Test print</button>
+            <button type="button" id="hw-test-drawer" class="small" data-i18n="hw.testDrawer">Test drawer</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="hw.system">This computer</legend>
+          <label class="check"><input name="kiosk" type="checkbox"> <span data-i18n="hw.kiosk">Full-screen kiosk mode</span></label>
+          <label class="check"><input name="autostart" type="checkbox"> <span data-i18n="hw.autostart">Start POS when the computer starts</span></label>
+          <label class="check"><input name="autoBackup" type="checkbox"> <span data-i18n="hw.autoBackup">Save a backup file after every day close</span></label>
+          <p class="muted small"><span data-i18n="hw.backupDir">Backup folder</span>: <span id="hw-backup-dir"></span></p>
+          <div class="row wrap">
+            <button type="button" id="hw-choose-dir" class="small" data-i18n="hw.chooseDir">Change folder</button>
+            <button type="button" id="hw-open-dir" class="small" data-i18n="hw.openDir">Open folder</button>
+            <button type="button" id="hw-quit" class="small danger" data-i18n="hw.quit">Exit POS</button>
+          </div>
+          <p id="hw-version" class="muted small"></p>
+        </fieldset>
+        <div><button class="primary" type="submit" data-i18n="hw.save">Save hardware settings</button></div>
+      </form>
+      <h3 data-i18n="set.data">Data</h3>
+      <p id="storage-info" class="muted small"></p>
+      <div class="row wrap">
+        <button id="backup" data-i18n="set.backup">Download backup</button>
+        <label class="button"><span data-i18n="set.restore">Restore backup</span><input id="restore" type="file" accept="application/json" hidden></label>
+        <button id="reset-data" class="danger" data-i18n="set.reset">Reset all data</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="report-print" class="report-print"></div>
+
+<!-- Payment -->
+<dialog id="pay-dialog">
+  <h2 data-i18n="pay.title">Payment</h2>
+  <dl class="totals">
+    <dt data-i18n="pay.total">Total</dt><dd id="pay-total"></dd>
+    <dt data-i18n="pay.paid">Paid</dt><dd id="pay-paid"></dd>
+    <dt class="grand" id="pay-due-label"></dt><dd class="grand" id="pay-due"></dd>
+  </dl>
+  <ul id="pay-list" class="pay-list"></ul>
+  <div id="pay-entry">
+    <label><span data-i18n="pay.amount">Amount</span> <input id="pay-amount" inputmode="decimal" autocomplete="off"></label>
+    <div id="quick-cash" class="chips"></div>
+    <div class="row">
+      <button id="add-cash" class="big" data-i18n="method.cash">Cash</button>
+      <button id="add-card" class="big" data-i18n="method.card">Card</button>
+      <button id="add-promptpay" class="big" data-i18n="method.promptpay">PromptPay</button>
+    </div>
+  </div>
+  <div id="pp-panel" class="pp-panel" hidden>
+    <div class="pp-head">Thai QR Payment · PromptPay</div>
+    <div id="pp-qr" class="pp-qr"></div>
+    <div id="pp-amount" class="pp-amount"></div>
+    <div id="pp-target" class="muted small"></div>
+    <p class="small" data-i18n="pp.check">Confirm the payment in your bank app before accepting.</p>
+    <div class="row">
+      <button id="pp-cancel" class="ghost" data-i18n="btn.cancel">Cancel</button>
+      <button id="pp-ok" class="primary" data-i18n="pp.received">Payment received</button>
+    </div>
+  </div>
+  <div class="row">
+    <button id="pay-cancel" class="ghost" data-i18n="btn.cancel">Cancel</button>
+    <button id="pay-complete" class="primary big" data-i18n="pay.complete">Complete sale</button>
+  </div>
+</dialog>
+
+<!-- Receipt / documents -->
+<dialog id="receipt-dialog">
+  <div id="receipt" class="receipt"></div>
+  <div class="row no-print">
+    <button id="print-receipt" data-i18n="btn.print">Print</button>
+    <button id="close-receipt" class="primary" data-i18n="btn.close">Close</button>
+  </div>
+</dialog>
+
+<!-- Generic prompt (manager override, amounts, etc.) -->
+<dialog id="prompt-dialog">
+  <form method="dialog" id="prompt-form">
+    <h2 id="prompt-title"></h2>
+    <p id="prompt-text" class="muted"></p>
+    <div id="prompt-fields" class="stack"></div>
+    <div class="row">
+      <button value="cancel" type="button" id="prompt-cancel" class="ghost" data-i18n="btn.cancel">Cancel</button>
+      <button value="ok" id="prompt-ok" class="primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="src/vendor/qrcode.js"></script>
+<script src="src/i18n.js"></script>
+<script src="src/core.js"></script>
+<script src="src/storage.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>
