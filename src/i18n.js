@@ -228,6 +228,21 @@ window.I18N = {
     'set.resetTextDocs': 'A full backup has just been downloaded; keep it for at least 5 years. Resetting permanently deletes everything on this terminal. Type RESET to confirm.',
     'restore.broken': 'This backup is damaged or was edited (journal entry #{seq}).',
     'restore.rollback': 'This backup does not contain all documents already issued on this terminal, so restoring it would lose records.',
+
+    // Desktop app hardware
+    'hw.title': 'Hardware (desktop app)', 'hw.receiptPrinter': 'Receipt printer', 'hw.autoPrint': 'Print receipts automatically (no dialog)',
+    'hw.reportPrinter': 'Report printer (A4)', 'hw.drawer': 'Cash drawer', 'hw.drawerNone': 'None / opened by the printer driver',
+    'hw.drawerNetwork': 'Network receipt printer (IP, port 9100)', 'hw.drawerShare': 'USB printer shared in Windows (share name)',
+    'hw.host': 'Printer IP address', 'hw.port': 'Port', 'hw.share': 'Windows printer share name',
+    'hw.testPrint': 'Test print', 'hw.testDrawer': 'Test drawer', 'hw.system': 'This computer',
+    'hw.kiosk': 'Full-screen kiosk mode', 'hw.autostart': 'Start POS when the computer starts',
+    'hw.autoBackup': 'Save a backup file after every day close', 'hw.backupDir': 'Backup folder',
+    'hw.chooseDir': 'Change folder', 'hw.openDir': 'Open folder', 'hw.quit': 'Exit POS', 'hw.quitText': 'Close the POS program?',
+    'hw.save': 'Save hardware settings', 'hw.saved': 'Hardware settings saved', 'hw.invalid': 'Invalid hardware setting: {err}',
+    'hw.printerAsk': '(ask each time)', 'hw.missing': '(not found)',
+    'hw.printFailed': 'Printing failed: {err}', 'hw.drawerFailed': 'Cash drawer did not open: {err}', 'hw.drawerOk': 'Drawer command sent',
+    'hw.backupFailed': 'Automatic backup failed: {err}', 'hw.noSale': 'Open drawer (no sale)',
+    'jtype.drawer': 'Drawer opened (no sale)',
   },
 
   th: {
@@ -455,5 +470,19 @@ window.I18N = {
     'set.resetTextDocs': 'ดาวน์โหลดข้อมูลสำรองทั้งหมดแล้ว กรุณาเก็บไว้อย่างน้อย 5 ปี การล้างข้อมูลจะลบทุกอย่างในเครื่องนี้ถาวร พิมพ์ RESET เพื่อยืนยัน',
     'restore.broken': 'ไฟล์สำรองนี้เสียหายหรือถูกแก้ไข (บันทึกรายการ #{seq})',
     'restore.rollback': 'ไฟล์สำรองนี้ไม่มีเอกสารบางฉบับที่ออกจากเครื่องนี้แล้ว การกู้คืนจะทำให้ข้อมูลสูญหาย',
+
+    'hw.title': 'อุปกรณ์ (โปรแกรมบนเครื่อง)', 'hw.receiptPrinter': 'เครื่องพิมพ์ใบเสร็จ', 'hw.autoPrint': 'พิมพ์ใบเสร็จอัตโนมัติ (ไม่ต้องกดยืนยัน)',
+    'hw.reportPrinter': 'เครื่องพิมพ์รายงาน (A4)', 'hw.drawer': 'ลิ้นชักเงินสด', 'hw.drawerNone': 'ไม่มี / เปิดโดยไดรเวอร์เครื่องพิมพ์',
+    'hw.drawerNetwork': 'เครื่องพิมพ์ใบเสร็จแบบเครือข่าย (IP, พอร์ต 9100)', 'hw.drawerShare': 'เครื่องพิมพ์ USB ที่แชร์ใน Windows (ชื่อแชร์)',
+    'hw.host': 'IP ของเครื่องพิมพ์', 'hw.port': 'พอร์ต', 'hw.share': 'ชื่อแชร์เครื่องพิมพ์ใน Windows',
+    'hw.testPrint': 'ทดสอบพิมพ์', 'hw.testDrawer': 'ทดสอบลิ้นชัก', 'hw.system': 'เครื่องนี้',
+    'hw.kiosk': 'โหมดเต็มจอ (Kiosk)', 'hw.autostart': 'เปิดโปรแกรม POS อัตโนมัติเมื่อเปิดเครื่อง',
+    'hw.autoBackup': 'บันทึกไฟล์สำรองข้อมูลทุกครั้งที่ปิดยอดประจำวัน', 'hw.backupDir': 'โฟลเดอร์สำรองข้อมูล',
+    'hw.chooseDir': 'เปลี่ยนโฟลเดอร์', 'hw.openDir': 'เปิดโฟลเดอร์', 'hw.quit': 'ออกจากโปรแกรม', 'hw.quitText': 'ต้องการปิดโปรแกรม POS หรือไม่?',
+    'hw.save': 'บันทึกการตั้งค่าอุปกรณ์', 'hw.saved': 'บันทึกการตั้งค่าอุปกรณ์แล้ว', 'hw.invalid': 'การตั้งค่าอุปกรณ์ไม่ถูกต้อง: {err}',
+    'hw.printerAsk': '(ถามทุกครั้ง)', 'hw.missing': '(ไม่พบเครื่อง)',
+    'hw.printFailed': 'พิมพ์ไม่สำเร็จ: {err}', 'hw.drawerFailed': 'เปิดลิ้นชักไม่สำเร็จ: {err}', 'hw.drawerOk': 'ส่งคำสั่งเปิดลิ้นชักแล้ว',
+    'hw.backupFailed': 'สำรองข้อมูลอัตโนมัติไม่สำเร็จ: {err}', 'hw.noSale': 'เปิดลิ้นชัก (ไม่มีการขาย)',
+    'jtype.drawer': 'เปิดลิ้นชัก (ไม่มีการขาย)',
   },
 };

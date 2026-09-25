@@ -2,8 +2,45 @@
 
 A point-of-sale terminal for retail and quick-service stores that runs in the browser. There's no build step, no dependencies and no server.
 
-## Run
-Open `index.html` in a browser. On first run, sign in as **Manager** with PIN **1234**, pick your country, then set a new PIN under **Staff**.
+## Install
+
+### Desktop app (recommended for a shop)
+Installers are built automatically by GitHub Actions (**Actions → Test and build desktop app → Artifacts**):
+
+| System | File | How to install |
+|---|---|---|
+| Windows 10/11 | `POS-Terminal-<version>-win-x64.exe` | Run it and follow the setup wizard; it creates a desktop and Start-menu shortcut |
+| macOS | `POS-Terminal-<version>-mac-<arch>.dmg` | Open it and drag POS Terminal to Applications |
+| Linux | `POS-Terminal-<version>-linux-x86_64.AppImage` | Make it executable and run it |
+
+First start: sign in as **Manager** with PIN **1234**, pick your country, then set a new PIN under **Staff**. Then open **Settings → Hardware** to set up the printers and cash drawer.
+
+The desktop app adds, compared with the browser version:
+- **Silent receipt printing:** receipts, void slips, credit notes, full tax invoices and Z reports print straight to the receipt printer with no dialog. A4 reports open the print dialog with the report printer already selected.
+- **Cash drawer:** opens on cash sales, cash refunds and voids, pay-ins and pay-outs, opening a shift, and the shift-close count. **Open drawer (no sale)** needs a manager and is recorded in the journal. It sends the standard ESC/POS drawer command (`ESC p`) either
+  - to a **network receipt printer** (IP address, port 9100), or
+  - on Windows, to a **USB receipt printer shared in Windows** (share it under Printer properties → Sharing and enter the share name).
+
+  With **None**, set the printer driver to open the drawer when it prints (most Epson/Xprinter drivers have this option).
+- **Automatic backups:** after every day close, a full backup file is written to `Documents/POS Backups` (you can change the folder). Copy this folder somewhere safe regularly; tax records must be kept 5 years.
+- **Kiosk mode** (full screen, no desktop) and **start with the computer**, per machine.
+- **One copy per computer,** so two windows can never issue the same document number.
+- Hardware settings belong to the computer (`pos-config.json` in the app data folder); store data stays in the app's own database.
+
+#### Code signing
+The installers are **not code-signed**. Windows SmartScreen shows "Windows protected your PC": click **More info → Run anyway**. On macOS, right-click the app and choose **Open** the first time. To remove these warnings, buy a code-signing certificate and add it to the build (see the electron-builder docs on code signing).
+
+### Browser (quick try-out)
+Open `index.html` in Chrome, Edge or Firefox. Everything works except silent printing, the cash drawer and automatic backup files.
+
+### Build it yourself
+```
+npm install
+npm start          # run the desktop app from source
+npm run dist:win   # build the Windows installer (run this on Windows)
+npm run dist:mac   # build the macOS .dmg (run this on a Mac)
+npm run dist:linux # build the Linux AppImage
+```
 
 ## Features
 **Checkout**
@@ -84,6 +121,8 @@ Other safeguards:
 - Changing currency doesn't convert product prices. Sales keep their original currency, and reports only show the current one (the CSV has everything).
 
 ## Third-party code
+`electron/` contains the desktop app: `main.js` (window, printing, drawer, backups), `preload.js` (the small API the page can call; the page has no Node access) and `hardware.js`.
+
 `src/storage.js` handles persistence (IndexedDB, with localStorage as a fallback).
 
 `src/vendor/qrcode.js`: QR Code Generator by Kazuhiko Arase (MIT licence; the licence text is at the top of the file).
@@ -92,3 +131,4 @@ Other safeguards:
 ```
 npm test
 ```
+Unit tests cover money, tax, payments, shifts, the journal, daily and monthly tax reports, PromptPay payloads, and the desktop hardware helpers (drawer command, config validation, backup files).

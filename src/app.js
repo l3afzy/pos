@@ -1,8 +1,10 @@
 (function () {
   'use strict';
   const P = window.POS;
+  const native = window.posNative || null; // present when running as the desktop app
+  let hw = null;                           // desktop hardware config (per computer)
   const APP_NAME = 'POS Terminal';
-  const APP_VERSION = '4.0';
+  const APP_VERSION = '4.1';
   const LANG_KEY = 'pos-ui-lang';
   const IDLE_LOCK_MS = 5 * 60 * 1000;
   const MAX_PIN_TRIES = 5;
@@ -150,6 +152,7 @@
   const dirtySales = new Set();
   let newJournal = [];
   let saving = Promise.resolve();
+  let appInfo = null;
 
   let user = null;
   let cart = [];
@@ -374,9 +377,33 @@
     });
   }
 
-  function showDoc(lines) {
+  // print: true for newly issued originals, which the desktop app prints
+  // straight to the receipt printer when auto-print is on.
+  function showDoc(lines, { print = false } = {}) {
     $('#receipt').replaceChildren(...renderDocLines(lines));
     $('#receipt-dialog').showModal();
+    if (print && native && hw && hw.autoPrint) printReceipt();
+  }
+
+  async function printReceipt() {
+    if (!native) { window.print(); return; }
+    const r = await native.print('receipt', $('#receipt').outerHTML);
+    if (!r || !r.ok) toast(t('hw.printFailed', { err: (r && r.error) || '?' }), true);
+  }
+
+  // Open the cash drawer (desktop app with a drawer configured).
+  async function kickDrawer() {
+    if (!native || !hw || hw.drawer.mode === 'none') return;
+    const r = await native.openDrawer();
+    if (!r.ok) toast(t('hw.drawerFailed', { err: r.error }), true);
+  }
+
+  // Desktop app: write a backup file to disk (after each day close).
+  async function autoBackup() {
+    if (!native || !hw || !hw.autoBackup) return;
+    const r = await native.saveBackup(`pos-backup-${S().taxId || 'store'}-${today()}.json`, backupJSON());
+    if (r.ok) { data.lastBackupAt = new Date().toISOString(); save(); renderAlerts(); renderStorageInfo(); }
+    else toast(t('hw.backupFailed', { err: r.error }), true);
   }
 
   const MODE_MARK = {
@@ -639,6 +666,7 @@
     if (closed.length) {
       save();
       toast(t('day.autoClosed', { days: closed.map(z => fmtDay(z.day)).join(', ') }));
+      autoBackup();
     }
     return closed;
   }
@@ -1017,7 +1045,8 @@
     $('#pay-dialog').close();
     resetSale();
     renderAll();
-    showDoc(receiptDoc(r.sale));
+    showDoc(receiptDoc(r.sale), { print: true });
+    if (payments.some(p => p.method === 'cash')) kickDrawer();
     if (r.sale.change) toast(t('pay.changeDue', { amt: money(r.sale.change) }));
   }
 
@@ -1106,7 +1135,8 @@
     upsertSale(r.sale);
     journalAdd('void', { ref: sale.id, amount: -sale.total, doc: { saleId: sale.id, voided: r.sale.voided } });
     save(); renderAll(); toast(t('void.done'));
-    showDoc(voidDoc(r.sale));
+    showDoc(voidDoc(r.sale), { print: true });
+    if (P.saleTenders(sale).cash) kickDrawer();
   }
 
   async function issueInvoice(id) {
@@ -1141,7 +1171,7 @@
     upsertSale(updated);
     journalAdd('invoice', { ref: fullInvoice.no, amount: sale.total, doc: { saleId: sale.id, fullInvoice } });
     save(); renderAll();
-    showDoc(invoiceDoc(updated));
+    showDoc(invoiceDoc(updated), { print: true });
   }
 
   async function refundSale(id) {
@@ -1173,7 +1203,8 @@
     upsertSale(r.sale);
     journalAdd('refund', { ref: r.sale.refund.id, amount: -sale.total, doc: { saleId: sale.id, refund: r.sale.refund } });
     save(); renderAll(); toast(t('refund.done'));
-    showDoc(refundDoc(r.sale));
+    showDoc(refundDoc(r.sale), { print: true });
+    if (cash) kickDrawer();
   }
 
   // ---------------------------------------------------------------- shift ---
@@ -1206,6 +1237,7 @@
           el('button', { textContent: t('shift.payIn'), onclick: guard(() => movementFlow('in')) }),
           el('button', { textContent: t('shift.payOut'), onclick: guard(() => movementFlow('out')) }),
           el('button', { textContent: t('shift.x'), onclick: () => showDoc(shiftDoc(shift, false)) }),
+          native && hw && hw.drawer.mode !== 'none' ? el('button', { textContent: t('hw.noSale'), onclick: guard(noSaleFlow) }) : null,
           el('button', { className: 'danger', textContent: t('shift.close'), onclick: guard(closeShiftFlow) }))));
     }
     const tb = $('#shift-rows');
@@ -1262,7 +1294,22 @@
     if (!(await confirmBox(t('day.close'), t('day.closeText', { day: fmtDay(d) })))) return;
     const z = closeDay(d, false);
     save(); renderAll();
-    showDoc(zDoc(z));
+    showDoc(zDoc(z), { print: true });
+    autoBackup();
+  }
+
+  // Open the drawer without a sale: needs a manager and is journaled.
+  async function noSaleFlow() {
+    const shift = currentShift();
+    if (!shift) throw new Error(t('shift.noOpen'));
+    const r = await ask({ title: t('hw.noSale'), ok: t('hw.noSale'), fields: [{ name: 'reason', label: t('shift.reason') }] });
+    if (!r) return;
+    if (!r.reason.trim()) throw new Error(t('err.reason'));
+    const m = await managerApproval(t('hw.noSale') + ': ' + r.reason.trim());
+    if (!m) return;
+    journalAdd('drawer', { ref: shift.id, doc: { reason: r.reason.trim(), approvedBy: m.name } });
+    save();
+    await kickDrawer();
   }
 
   async function openShiftFlow() {
@@ -1277,6 +1324,7 @@
     data.currentShiftId = shift.id;
     journalAdd('shift-open', { ref: shift.id, amount: shift.float });
     save(); renderAll(); showView('register'); toast(t('shift.opened', { id: shift.id }));
+    kickDrawer();
   }
 
   async function movementFlow(type) {
@@ -1295,12 +1343,14 @@
     data.shifts = data.shifts.map(s => (s.id === shift.id ? updated : s));
     journalAdd(type === 'in' ? 'pay-in' : 'pay-out', { ref: shift.id, amount, doc: { reason: r.reason.trim() } });
     save(); renderAll(); toast(t('shift.recorded'));
+    kickDrawer();
   }
 
   async function closeShiftFlow() {
     const shift = currentShift();
     if (!shift) return;
     if (data.held.length && !(await confirmBox(t('shift.heldTitle'), t('shift.heldText', { n: data.held.length })))) return;
+    kickDrawer(); // open the drawer so the cash can be counted
     const r = await ask({ title: t('shift.close'), text: t('shift.closeText'), ok: t('shift.close'),
       fields: [{ name: 'counted', label: t('shift.counted'), inputmode: 'decimal' }] });
     if (!r) return;
@@ -1309,7 +1359,7 @@
     data.currentShiftId = null;
     journalAdd('shift-close', { ref: shift.id, amount: closed.counted, doc: { expected: closed.report.expectedCash, variance: closed.report.variance } });
     save(); renderAll();
-    showDoc(shiftDoc(closed, true));
+    showDoc(shiftDoc(closed, true), { print: true });
   }
 
   // -------------------------------------------------------------- reports ---
@@ -1414,6 +1464,10 @@
   function printPage(nodes) {
     const box = $('#report-print');
     box.replaceChildren(...nodes.filter(Boolean));
+    if (native) {
+      native.print('report', box.innerHTML).then(r => { if (!r.ok && r.error !== 'cancelled') toast(t('hw.printFailed', { err: r.error }), true); });
+      return;
+    }
     document.body.classList.add('print-report');
     const done = () => { document.body.classList.remove('print-report'); window.removeEventListener('afterprint', done); };
     window.addEventListener('afterprint', done);
@@ -1644,6 +1698,7 @@
 
   function renderSettings() {
     fillSettingsForm(S());
+    renderHardware();
     $('#store-name').textContent = S().storeName;
     document.title = `${S().storeName} · POS`;
     renderStorageInfo();
@@ -1712,6 +1767,58 @@
     if (Object.keys(changed).length) journalAdd('settings', { doc: changed });
     save(); applyI18n(); applyRole(); renderAll(); toast(t('set.saved'));
     if (thaiVat && f.language.value !== 'th') toast(t('set.thaiForced'));
+  }
+
+  // ------------------------------------------------ desktop hardware ---
+  function syncDrawerFields() {
+    const mode = $('#hw-form').drawerMode.value;
+    for (const e of $$('.hw-net')) e.hidden = mode !== 'network';
+    for (const e of $$('.hw-share')) e.hidden = mode !== 'share';
+  }
+
+  async function renderHardware() {
+    const f = $('#hw-form');
+    f.hidden = !native || !isManager();
+    if (!native || !hw) return;
+    let printers = [];
+    try { printers = await native.listPrinters(); } catch (e) { console.error(e); }
+    const opts = (sel, value) => {
+      sel.replaceChildren(el('option', { value: '', textContent: t('hw.printerAsk') }),
+        ...printers.map(p => el('option', { value: p.name, textContent: p.displayName + (p.isDefault ? ' ★' : '') })));
+      if (value && !printers.some(p => p.name === value)) sel.append(el('option', { value, textContent: value + ' ' + t('hw.missing') }));
+      sel.value = value || '';
+    };
+    opts(f.receiptPrinter, hw.receiptPrinter);
+    opts(f.reportPrinter, hw.reportPrinter);
+    f.autoPrint.checked = hw.autoPrint; f.kiosk.checked = hw.kiosk; f.autostart.checked = hw.autostart; f.autoBackup.checked = hw.autoBackup;
+    f.drawerMode.value = hw.drawer.mode; f.drawerHost.value = hw.drawer.host; f.drawerPort.value = hw.drawer.port; f.drawerShare.value = hw.drawer.share;
+    syncDrawerFields();
+    $('#hw-backup-dir').textContent = hw.backupDir;
+    $('#hw-version').textContent = appInfo ? `${APP_NAME} ${appInfo.version} · ${appInfo.platform}` : '';
+  }
+
+  async function saveHardware(e) {
+    e.preventDefault();
+    const f = e.target;
+    const port = Number(f.drawerPort.value || 9100);
+    try {
+      hw = await native.setConfig({
+        receiptPrinter: f.receiptPrinter.value, reportPrinter: f.reportPrinter.value, autoPrint: f.autoPrint.checked,
+        kiosk: f.kiosk.checked, autostart: f.autostart.checked, autoBackup: f.autoBackup.checked,
+        drawer: { mode: f.drawerMode.value, host: f.drawerHost.value.trim(), port, share: f.drawerShare.value.trim() },
+      });
+    } catch (err) {
+      throw new Error(t('hw.invalid', { err: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }));
+    }
+    renderHardware(); renderShift(); toast(t('hw.saved'));
+  }
+
+  async function testPrint() {
+    const s = S();
+    showDoc([...sellerHeader(sellerSnapshot()), { gap: 1 }, { c: 'TEST PRINT / ทดสอบการพิมพ์', cls: 'title' },
+      { l: 'ภาษาไทย', r: 'กขคงจ ๑๒๓' }, { l: 'Currency', r: money(123456) }, { l: rt('doc.date'), r: fmtDate(new Date().toISOString()) },
+      { hr: 2 }, { c: s.footer || '' }]);
+    await printReceipt();
   }
 
   function backupJSON() {
@@ -1815,6 +1922,19 @@
     $('#pay-cancel').addEventListener('click', () => $('#pay-dialog').close());
     $('#pay-dialog').addEventListener('close', closePromptPay);
     $('#pay-complete').addEventListener('click', guard(completeSale));
+    $('#print-receipt').addEventListener('click', guard(printReceipt));
+    $('#hw-form').addEventListener('submit', guard(saveHardware));
+    $('#hw-form').drawerMode.addEventListener('change', syncDrawerFields);
+    $('#hw-test-print').addEventListener('click', guard(testPrint));
+    $('#hw-test-drawer').addEventListener('click', guard(async () => {
+      const r = await native.openDrawer();
+      toast(r.ok ? t('hw.drawerOk') : t('hw.drawerFailed', { err: r.error }), !r.ok);
+    }));
+    $('#hw-choose-dir').addEventListener('click', guard(async () => { hw = await native.chooseBackupDir(); renderHardware(); }));
+    $('#hw-open-dir').addEventListener('click', guard(() => native.openBackupDir()));
+    $('#hw-quit').addEventListener('click', guard(async () => {
+      if (await confirmBox(t('hw.quit'), t('hw.quitText'))) { await saving; native.quit(); }
+    }));
     $('#close-receipt').addEventListener('click', () => { $('#receipt-dialog').close(); if ($('#view-register').classList.contains('active')) $('#search').focus(); });
 
     $('#sale-search').addEventListener('input', renderSales);
@@ -1885,7 +2005,10 @@
     }
     if (fullWrite) await saveAll();
     integrity = P.verifyJournal(data.journal);
-    persisted = await window.POSStorage.persist();
+    persisted = native ? true : await window.POSStorage.persist(); // the desktop app's storage is never evicted
+    if (native) {
+      try { const info = await native.info(); hw = info.config; appInfo = info; } catch (e) { console.error(e); }
+    }
     wire();
     applyI18n();
     lock();

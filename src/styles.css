@@ -199,3 +199,7 @@ td.mono button { margin-left:.4rem; }
 .rp-foot { font-size:8pt; color:#444; }
 .rp-samples { display:flex; gap:12mm; align-items:flex-start; margin-top:6mm; break-inside:avoid; }
 .rp-receipt { border:1px dashed #000; }
+
+/* Desktop app */
+.settings.hw { margin-top:1rem; }
+body.print-report.receipt-mode #report-print { padding:0; }

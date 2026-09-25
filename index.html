@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'">
 <title>POS Terminal</title>
 <link rel="stylesheet" href="src/styles.css">
 </head>
@@ -229,6 +230,42 @@
         </fieldset>
         <div><button class="primary" type="submit" data-i18n="set.save">Save settings</button></div>
       </form>
+      <form id="hw-form" class="settings hw" hidden>
+        <fieldset>
+          <legend data-i18n="hw.title">Hardware (desktop app)</legend>
+          <label><span data-i18n="hw.receiptPrinter">Receipt printer</span> <select name="receiptPrinter"></select></label>
+          <label class="check"><input name="autoPrint" type="checkbox"> <span data-i18n="hw.autoPrint">Print receipts automatically (no dialog)</span></label>
+          <label><span data-i18n="hw.reportPrinter">Report printer (A4)</span> <select name="reportPrinter"></select></label>
+          <label><span data-i18n="hw.drawer">Cash drawer</span>
+            <select name="drawerMode">
+              <option value="none" data-i18n="hw.drawerNone">None / opened by printer driver</option>
+              <option value="network" data-i18n="hw.drawerNetwork">Network receipt printer (IP, port 9100)</option>
+              <option value="share" data-i18n="hw.drawerShare">USB printer shared in Windows (share name)</option>
+            </select>
+          </label>
+          <label class="hw-net"><span data-i18n="hw.host">Printer IP address</span> <input name="drawerHost" placeholder="192.168.1.100"></label>
+          <label class="hw-net"><span data-i18n="hw.port">Port</span> <input name="drawerPort" type="number" min="1" max="65535"></label>
+          <label class="hw-share"><span data-i18n="hw.share">Windows printer share name</span> <input name="drawerShare" placeholder="RECEIPT"></label>
+          <div class="row wrap">
+            <button type="button" id="hw-test-print" class="small" data-i18n="hw.testPrint">Test print</button>
+            <button type="button" id="hw-test-drawer" class="small" data-i18n="hw.testDrawer">Test drawer</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="hw.system">This computer</legend>
+          <label class="check"><input name="kiosk" type="checkbox"> <span data-i18n="hw.kiosk">Full-screen kiosk mode</span></label>
+          <label class="check"><input name="autostart" type="checkbox"> <span data-i18n="hw.autostart">Start POS when the computer starts</span></label>
+          <label class="check"><input name="autoBackup" type="checkbox"> <span data-i18n="hw.autoBackup">Save a backup file after every day close</span></label>
+          <p class="muted small"><span data-i18n="hw.backupDir">Backup folder</span>: <span id="hw-backup-dir"></span></p>
+          <div class="row wrap">
+            <button type="button" id="hw-choose-dir" class="small" data-i18n="hw.chooseDir">Change folder</button>
+            <button type="button" id="hw-open-dir" class="small" data-i18n="hw.openDir">Open folder</button>
+            <button type="button" id="hw-quit" class="small danger" data-i18n="hw.quit">Exit POS</button>
+          </div>
+          <p id="hw-version" class="muted small"></p>
+        </fieldset>
+        <div><button class="primary" type="submit" data-i18n="hw.save">Save hardware settings</button></div>
+      </form>
       <h3 data-i18n="set.data">Data</h3>
       <p id="storage-info" class="muted small"></p>
       <div class="row wrap">
@@ -282,7 +319,7 @@
 <dialog id="receipt-dialog">
   <div id="receipt" class="receipt"></div>
   <div class="row no-print">
-    <button onclick="window.print()" data-i18n="btn.print">Print</button>
+    <button id="print-receipt" data-i18n="btn.print">Print</button>
     <button id="close-receipt" class="primary" data-i18n="btn.close">Close</button>
   </div>
 </dialog>
