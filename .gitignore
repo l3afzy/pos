@@ -1,2 +1,6 @@
 node_modules/
 dist/
+
+# Impeccable: platform binary is downloaded on demand; hooks are per-machine
+.claude/skills/impeccable/scripts/bin/
+.claude/settings.local.json
