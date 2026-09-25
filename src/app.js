@@ -1,10 +1,11 @@
 (function () {
   'use strict';
   const P = window.POS;
+  const FL = window.Floor;
   const native = window.posNative || null; // present when running as the desktop app
   let hw = null;                           // desktop hardware config (per computer)
   const APP_NAME = 'POS Terminal';
-  const APP_VERSION = '4.1';
+  const APP_VERSION = '4.2';
   const LANG_KEY = 'pos-ui-lang';
   const IDLE_LOCK_MS = 5 * 60 * 1000;
   const MAX_PIN_TRIES = 5;
@@ -62,11 +63,13 @@
       settings: {
         ...PRESETS.US, storeName: 'My Store', header: '123 Main St\n(555) 010-0000', footer: 'Thank you!',
         cashierMaxDiscount: 10, taxId: '', branch: HEAD_OFFICE, posRegNo: '', promptpayId: '', regionChosen: false, ...EXTRA_SETTINGS,
+        businessType: 'retail',
       },
       staff: [{ id: 'u1', name: 'Manager', role: 'manager', pinHash: null, defaultPin: true }],
       products: sampleProducts('US'), sampleCatalog: true,
       sales: [], shifts: [], currentShiftId: null, held: [],
       zReports: [], journal: [], complianceFrom: today(), lastBackupAt: null,
+      floor: FL.emptyFloor(), tabs: {},
       seq: { sale: 0, shift: 0, refund: 0, cn: 0, inv: 0, z: 0 },
     };
   }
@@ -142,6 +145,18 @@
     d.sales.sort((a, b) => docNum(b.id) - docNum(a.id)); // newest first
     d.journal.sort((a, b) => a.seq - b.seq);
     repairSeq(d);
+    // Restaurant floor + open table orders (added in 4.2; older data has none).
+    d.settings.businessType = d.settings.businessType === 'restaurant' ? 'restaurant' : 'retail';
+    d.floor = FL.normalizeFloor(d.floor);
+    d.tabs = d.tabs && typeof d.tabs === 'object' && !Array.isArray(d.tabs) ? d.tabs : {};
+    // An order whose table no longer exists becomes a held sale, never lost.
+    for (const [id, tab] of Object.entries(d.tabs)) {
+      if (!tab || !Array.isArray(tab.cart) || !tab.cart.length) { delete d.tabs[id]; continue; }
+      if (!d.floor.tables.some(tb => tb.id === id)) {
+        d.held.push({ id: 'h' + id, cart: tab.cart, orderDiscountPct: tab.orderDiscountPct || 0, by: tab.by || '', date: tab.openedAt || new Date().toISOString() });
+        delete d.tabs[id];
+      }
+    }
     return d;
   }
 
@@ -155,6 +170,7 @@
   let appInfo = null;
 
   let user = null;
+  let activeTable = null; // table id whose order is open in the register (restaurant mode)
   let cart = [];
   let orderDiscountPct = 0;
   let category = null;
@@ -210,6 +226,43 @@
   function checkClock() {
     const last = data.journal[data.journal.length - 1];
     if (last && Date.now() < Date.parse(last.at) - CLOCK_TOLERANCE_MS) throw new Error(t('err.clock', { at: fmtDate(last.at) }));
+  }
+
+  // --------------------------------------------------------------- icons ---
+  const ICONS = {
+    cart: 'M3 4h2l2.2 10.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.5L20.5 8H6.1M10 20.5h.01M17 20.5h.01',
+    tables: 'M4 9h16M6 9v9M18 9v9M9 13h6M12 5v4',
+    receipt: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3',
+    cash: 'M3 7h18v10H3zM12 12m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0M6 10v4M18 10v4',
+    chart: 'M4 20V11M10 20V5M16 20v-7M22 20H2',
+    box: 'M21 8 12 3 3 8l9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8',
+    book: 'M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h10',
+    users: 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 3.5a4 4 0 0 1 0 7.5M22 21v-1a6 6 0 0 0-4-5.6',
+    gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1',
+    lock: 'M6 11h12v10H6zM8.5 11V7.5a3.5 3.5 0 0 1 7 0V11',
+    edit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
+  };
+  function icon(name) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svgEl = document.createElementNS(NS, 'svg');
+    svgEl.setAttribute('viewBox', '0 0 24 24');
+    svgEl.setAttribute('class', 'icon');
+    svgEl.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', ICONS[name] || '');
+    svgEl.append(path);
+    return svgEl;
+  }
+  function applyIcons() {
+    for (const e of $$('[data-icon]')) if (!e.firstChild) e.append(icon(e.dataset.icon));
+  }
+
+  // Each product category gets its own colour.
+  const CAT_COLORS = ['#f97316', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#eab308', '#14b8a6', '#ef4444', '#06b6d4', '#84cc16'];
+  function catColor(name) {
+    let h = 0;
+    for (const ch of String(name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return CAT_COLORS[h % CAT_COLORS.length];
   }
 
   // ---------------------------------------------------------------- i18n ---
@@ -452,6 +505,7 @@
     out.push(...modeLines(mode));
     out.push({ l: rt('doc.no'), r: sale.id }, { l: rt('doc.date'), r: fmtDate(sale.date) });
     if (sale.cashier) out.push({ l: rt('doc.cashier'), r: sale.cashier });
+    if (sale.table) out.push({ l: rt('doc.table'), r: sale.table.name });
     out.push({ hr: 1 }, ...itemLines(sale, m), { hr: 1 }, { l: rt('doc.subtotal'), r: m(sale.subtotal) });
     if (sale.orderDiscount) out.push({ l: rt('doc.orderDiscount', { p: sale.orderDiscountPct }), r: m(-sale.orderDiscount) });
     if (!sale.taxInclusive && (sale.tax || sale.taxRateBp)) out.push({ l: `${label} ${fmtRate(sale.taxRateBp || 0)}%`, r: m(sale.tax) });
@@ -730,12 +784,13 @@
     toast(t('login.welcome', { name: user.name }));
     try { autoCloseDays(); } catch (e) { toast(errText(e), true); }
     renderAll();
-    showView(currentShift() ? 'register' : 'shift');
+    showView(!currentShift() ? 'shift' : isRestaurant() ? 'tables' : 'register');
     resetIdle();
     if (isManager() && !S().regionChosen) await guard(chooseRegion)();
   }
 
   function lock() {
+    if (activeTable) leaveTable();
     user = null;
     for (const d of $$('dialog')) if (d.open) d.close();
     $('#app').hidden = true;
@@ -750,18 +805,26 @@
     if (user) idleTimer = setTimeout(() => { if (user) { lock(); toast(t('login.idle')); } }, IDLE_LOCK_MS);
   }
 
+  const isRestaurant = () => S().businessType === 'restaurant';
+
   function applyRole() {
-    for (const b of $$('nav button[data-role=manager]')) b.hidden = !isManager();
+    for (const b of $$('[data-role=manager]')) b.hidden = !isManager();
+    for (const b of $$('nav button[data-mode=restaurant]')) b.hidden = !isRestaurant();
+    for (const b of $$('[data-native]')) b.hidden = !native;
     $('#user-badge').textContent = `${user.name} · ${t('role.' + user.role)}`;
   }
 
+  let currentView = 'register';
   function showView(name) {
     const btn = $(`nav button[data-view="${name}"]`);
     if (!btn || btn.hidden) return;
+    currentView = name;
     for (const b of $$('nav button')) b.classList.toggle('active', b === btn);
     for (const v of $$('.view')) v.classList.toggle('active', v.id === 'view-' + name);
+    $('#page-title').textContent = t('nav.' + name);
     if (name === 'register') $('#search').focus();
     if (name === 'journal') renderJournal();
+    if (name === 'tables') renderFloor();
   }
 
   // --------------------------------------------------------------- alerts ---
@@ -772,8 +835,8 @@
     if (isDayClosed(today())) items.push(['info', t('alert.dayClosed')]);
     if (isManager()) {
       if (isThaiVat(S()) && !S().posRegNo) items.push(['warn', t('alert.noPosReg')]);
+      // (Whether storage is persistent is shown under Settings → Backup & data.)
       if (store && store.kind !== 'indexeddb') items.push(['danger', t('alert.fallbackStorage')]);
-      else if (!persisted) items.push(['info', t('alert.notPersisted')]);
       const last = data.lastBackupAt ? Date.parse(data.lastBackupAt) : 0;
       if (data.sales.length && Date.now() - last > BACKUP_REMIND_DAYS * 864e5) {
         items.push(['warn', data.lastBackupAt ? t('alert.backupOld', { date: fmtDate(data.lastBackupAt) }) : t('alert.backupNever')]);
@@ -805,27 +868,43 @@
   async function chooseRegion() {
     const r = await ask({
       title: t('setup.title'), text: t('setup.text'),
-      fields: [{ name: 'country', label: t('setup.country'), type: 'select', value: lang() === 'th' ? 'TH' : 'US',
-        options: ['TH', 'US', 'OTHER'].map(c => ({ value: c, label: t('country.' + c) })) }],
+      fields: [
+        { name: 'country', label: t('setup.country'), type: 'select', value: lang() === 'th' ? 'TH' : 'US',
+          options: ['TH', 'US', 'OTHER'].map(c => ({ value: c, label: t('country.' + c) })) },
+        { name: 'biz', label: t('set.businessType'), type: 'select', value: 'retail',
+          options: ['retail', 'restaurant'].map(b => ({ value: b, label: t('biz.' + b) })) },
+      ],
     });
     if (!r) return;
     if (!applyPreset(r.country)) return;
+    setBusinessType(r.biz);
     uiLang = null;
     try { localStorage.removeItem(LANG_KEY); } catch (e) { /* ignore */ }
     applyI18n(); applyRole(); renderAll();
-    if (r.country !== 'US') showView('settings');
+    if (r.country !== 'US') { showView('settings'); showSettingsTab('region'); }
+    else if (isRestaurant()) showView('tables');
+  }
+
+  // Switching to restaurant mode gives an empty floor a starter layout.
+  function setBusinessType(type) {
+    data.settings = { ...S(), businessType: type === 'restaurant' ? 'restaurant' : 'retail' };
+    if (isRestaurant() && !data.floor.tables.length) data.floor = FL.sampleFloor(t('floor.mainArea'));
+    save();
   }
 
   // ------------------------------------------------------------ register ---
   function renderCategories() {
     const cats = [...new Set(data.products.map(p => p.category || 'General'))].sort((a, b) => a.localeCompare(b));
     if (category && !cats.includes(category)) category = null;
-    $('#categories').replaceChildren(
-      el('button', { textContent: t('cat.all'), className: category ? '' : 'active', onclick: () => { category = null; renderCategories(); renderGrid(); } }),
-      ...cats.map(c => el('button', {
-        textContent: c, className: c === category ? 'active' : '',
-        onclick: () => { category = c; renderCategories(); renderGrid(); },
-      })));
+    const chip = (label, value, color) => {
+      const b = el('button', {
+        type: 'button', textContent: label, className: (value || null) === category ? 'active' : '',
+        onclick: () => { category = value || null; renderCategories(); renderGrid(); },
+      });
+      if (color) b.style.setProperty('--c', color);
+      return b;
+    };
+    $('#categories').replaceChildren(chip(t('cat.all'), null, null), ...cats.map(c => chip(c, c, catColor(c))));
     $('#category-list').replaceChildren(...cats.map(c => el('option', { value: c })));
   }
 
@@ -840,13 +919,17 @@
     for (const p of list) {
       const inCart = (cart.find(l => l.id === p.id) || { qty: 0 }).qty;
       const low = p.stock <= (p.lowStock || 0);
-      grid.append(el('button', {
-        className: 'tile', disabled: p.stock - inCart <= 0, title: p.sku,
+      const tile = el('button', {
+        type: 'button', className: 'tile', disabled: p.stock - inCart <= 0, title: p.sku,
         onclick: guard(() => addProduct(p)),
       },
+      el('span', { className: 'avatar', textContent: Array.from(p.name.trim())[0] || '?' }),
       el('strong', { textContent: p.name }),
       el('span', { className: 'price', textContent: money(p.price) }),
-      el('small', { className: low ? 'low' : '', textContent: p.stock <= 0 ? t('reg.outOfStock') : t('reg.inStock', { n: p.stock }) + (low ? ' · ' + t('reg.low') : '') })));
+      el('small', { className: low ? 'low' : '', textContent: p.stock <= 0 ? t('reg.outOfStock') : t('reg.inStock', { n: p.stock }) + (low ? ' · ' + t('reg.low') : '') }),
+      inCart ? el('span', { className: 'in-cart', textContent: String(inCart) }) : null);
+      tile.style.setProperty('--c', catColor(p.category || 'General'));
+      grid.append(tile);
     }
   }
 
@@ -864,32 +947,53 @@
     apply(pct);
   }
 
+  function changeQty(id, delta) {
+    const line = cart.find(l => l.id === id);
+    const p = productById(id);
+    if (!line) return;
+    cart = P.setQty(cart, id, line.qty + delta, p ? p.stock : line.qty);
+    renderCart(); renderGrid();
+  }
+
+  // Tap a line: change quantity (0 removes it) or give a line discount.
+  async function editLine(id) {
+    const line = cart.find(l => l.id === id);
+    if (!line) return;
+    const r = await ask({ title: line.name, text: t('reg.each', { p: money(line.price) }), fields: [
+      { name: 'qty', label: t('reg.qtyZero'), type: 'number', value: line.qty },
+      { name: 'disc', label: t('reg.lineDiscPct'), type: 'number', value: line.discountPct || 0 },
+    ] });
+    if (!r) return;
+    const qty = Number(r.qty);
+    const p = productById(id);
+    cart = P.setQty(cart, id, qty, p ? p.stock : line.qty);
+    if (qty > 0) await changeDiscount(Number(r.disc), pct => { cart = P.setLineDiscount(cart, id, pct); }, 'reg.lineDisc');
+    renderCart(); renderGrid();
+  }
+
+  async function orderDiscountFlow() {
+    const r = await ask({ title: t('reg.discountBtn'), fields: [{ name: 'pct', label: t('reg.orderDiscount'), type: 'number', value: orderDiscountPct }] });
+    if (!r) return;
+    await changeDiscount(Number(r.pct), pct => { orderDiscountPct = pct; }, 'reg.orderDiscW');
+    renderCart();
+  }
+
   function renderCart() {
-    const tb = $('#cart-lines');
-    tb.replaceChildren();
-    if (!cart.length) tb.append(el('tr', {}, el('td', { colSpan: 5, className: 'muted', textContent: t('reg.empty') })));
+    const ul = $('#cart-lines');
+    ul.replaceChildren();
+    if (!cart.length) ul.append(el('li', { className: 'empty', textContent: t('reg.empty') }));
     for (const line of cart) {
       const lt = P.lineTotals(line);
-      tb.append(el('tr', {},
-        el('td', {}, el('div', { textContent: line.name }), el('small', { className: 'muted', textContent: t('reg.each', { p: money(line.price) }) })),
-        el('td', {}, el('input', {
-          type: 'number', min: '0', step: '1', value: String(line.qty), ariaLabel: t('col.qty'),
-          onchange: guard(async e => {
-            try { cart = P.setQty(cart, line.id, Number(e.target.value), productById(line.id).stock); }
-            finally { renderCart(); renderGrid(); }
-          }),
-        })),
-        el('td', {}, el('input', {
-          type: 'number', min: '0', max: '100', step: '1', value: String(line.discountPct || 0), ariaLabel: t('col.disc'),
-          onchange: guard(async e => {
-            try { await changeDiscount(Number(e.target.value), pct => { cart = P.setLineDiscount(cart, line.id, pct); }, 'reg.lineDisc'); }
-            finally { renderCart(); }
-          }),
-        })),
-        el('td', { className: 'num' }, lt.discount ? el('s', { className: 'muted small', textContent: money(lt.gross) }) : null, lt.discount ? el('br') : null, money(lt.net)),
-        el('td', {}, el('button', { className: 'x ghost', textContent: '✕', title: t('reg.remove'), onclick: () => { cart = cart.filter(l => l.id !== line.id); renderCart(); renderGrid(); } }))));
+      ul.append(el('li', { className: 'line' },
+        el('button', { type: 'button', className: 'line-name', title: t('reg.editLine'), onclick: guard(() => editLine(line.id)) },
+          el('span', { className: 'nm', textContent: line.name }),
+          el('small', { className: 'muted', textContent: t('reg.each', { p: money(line.price) }) + (line.discountPct ? ` · −${line.discountPct}%` : '') })),
+        el('div', { className: 'stepper' },
+          el('button', { type: 'button', className: 'step minus', textContent: '−', ariaLabel: t('reg.less'), onclick: guard(() => changeQty(line.id, -1)) }),
+          el('span', { className: 'qty', textContent: String(line.qty) }),
+          el('button', { type: 'button', className: 'step plus', textContent: '+', ariaLabel: t('reg.more'), onclick: guard(() => changeQty(line.id, 1)) })),
+        el('span', { className: 'line-total', textContent: money(lt.net) })));
     }
-    $('#order-discount').value = String(orderDiscountPct);
     const tot = P.computeTotals(cart, orderDiscountPct, taxSpec());
     const s = S();
     const rows = [[t('reg.items'), String(cart.reduce((a, l) => a + l.qty, 0))], [t('reg.subtotal'), money(tot.gross)]];
@@ -900,14 +1004,38 @@
     if (tot.taxInclusive && s.taxRateBp) rows.push([t('reg.inclTax', { label: s.taxLabel, rate: fmtRate(s.taxRateBp) }), money(tot.tax), 'sub']);
     if (tot.exemptAmount) rows.push([t('reg.exempt'), money(tot.exemptAmount), 'sub']);
     $('#totals').replaceChildren(...rows.flatMap(([k, v, cls = '']) => [el('dt', { className: cls, textContent: k }), el('dd', { className: cls, textContent: v })]));
+    $('#pay-amount-label').textContent = cart.length ? money(tot.total) : '';
+    // Header: which table (restaurant) or the counter sale.
+    const table = activeTable && data.floor.tables.find(tb => tb.id === activeTable);
+    $('#cart-title').textContent = table ? t('floor.tableTitle', { name: table.name }) : isRestaurant() ? t('floor.takeaway') : t('reg.current');
+    $('#cart-sub').textContent = table ? t('floor.seats', { n: FL.seats(data.floor, table.id) }) : '';
+    $('#to-floor').hidden = !isRestaurant();
+    $('#move-table').hidden = !table || !cart.length;
+    $('#hold').hidden = $('#recall').hidden = !!table;
     const shift = currentShift();
     const closed = isDayClosed(today());
     $('#no-shift').hidden = !!shift;
     $('#pay').disabled = !cart.length || !shift || closed;
     $('#void-sale').disabled = !cart.length;
+    $('#order-discount-btn').disabled = !cart.length;
     $('#hold').disabled = !cart.length;
     $('#held-count').textContent = data.held.length ? `(${data.held.length})` : '';
     $('#recall').disabled = !data.held.length;
+    syncTab();
+  }
+
+  // Keep the open table's order saved (restaurant mode): an empty order frees the table.
+  function syncTab() {
+    if (!activeTable) return;
+    const cur = data.tabs[activeTable];
+    if (!cart.length) {
+      if (cur) { delete data.tabs[activeTable]; save(); }
+      return;
+    }
+    if (!cur || JSON.stringify(cur.cart) !== JSON.stringify(cart) || cur.orderDiscountPct !== orderDiscountPct) {
+      data.tabs[activeTable] = { cart, orderDiscountPct, openedAt: cur ? cur.openedAt : new Date().toISOString(), by: cur ? cur.by : user.name };
+      save();
+    }
   }
 
   function resetSale() {
@@ -1038,9 +1166,12 @@
     commitId('sale');
     r.sale.taxLabel = s.taxLabel;
     r.sale.seller = sellerSnapshot();
+    const table = activeTable && data.floor.tables.find(tb => tb.id === activeTable);
+    if (table) r.sale.table = { id: table.id, name: table.name };
     data.products = r.products;
     upsertSale(r.sale);
     journalAdd('sale', { ref: r.sale.id, amount: r.sale.total, doc: r.sale });
+    if (activeTable) { delete data.tabs[activeTable]; activeTable = null; backToFloor = true; }
     save();
     $('#pay-dialog').close();
     resetSale();
@@ -1048,6 +1179,11 @@
     showDoc(receiptDoc(r.sale), { print: true });
     if (payments.some(p => p.method === 'cash')) kickDrawer();
     if (r.sale.change) toast(t('pay.changeDue', { amt: money(r.sale.change) }));
+  }
+
+  // Re-price a saved order from the current catalogue; drop removed products.
+  function repriceCart(lines) {
+    return lines.map(l => { const p = productById(l.id); return p && { ...l, name: p.name, price: p.price, taxable: p.taxable !== false }; }).filter(Boolean);
   }
 
   // ---------------------------------------------------------------- hold ---
@@ -1070,11 +1206,344 @@
     if (!r) return;
     const h = data.held.find(x => x.id === r.id);
     if (!h) return;
-    cart = h.cart.map(l => { const p = productById(l.id); return p && { ...l, name: p.name, price: p.price, taxable: p.taxable !== false }; }).filter(Boolean);
+    cart = repriceCart(h.cart);
     orderDiscountPct = h.orderDiscountPct;
     data.held = data.held.filter(x => x.id !== h.id);
     save(); renderCart(); renderGrid();
     if (cart.length < h.cart.length) toast(t('reg.heldRemoved'), true);
+  }
+
+  // --------------------------------------------------------------- floor ---
+  // Restaurant floor: an SVG in floor units (FL.W x FL.H). In edit mode tables
+  // and chairs are dragged around; in service mode tapping a table opens its order.
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  let floorEdit = false;
+  let floorArea = null;
+  let floorSel = null;   // { type: 'table' | 'chair', id }
+  let floorDrag = null;  // pointer drag in progress
+  let backToFloor = false;
+
+  function sv(tag, attrs = {}, ...kids) {
+    const e = document.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs)) if (v != null) e.setAttribute(k, v);
+    for (const k of kids) if (k != null) e.append(k);
+    return e;
+  }
+
+  const minutesSince = iso => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60000));
+  const tabTotal = tab => P.computeTotals(repriceCart(tab.cart), tab.orderDiscountPct || 0, taxSpec()).total;
+  const areaName = id => (data.floor.areas.find(a => a.id === id) || { name: '' }).name;
+
+  function renderFloor(f = data.floor) {
+    if (!data || !user) return;
+    if (!isManager()) floorEdit = false;
+    const editing = floorEdit;
+    if (!f.areas.some(a => a.id === floorArea)) floorArea = f.areas[0].id;
+    $('#area-tabs').replaceChildren(...f.areas.map(a => {
+      const busy = f.tables.filter(tb => tb.areaId === a.id && data.tabs[tb.id]).length;
+      return el('button', {
+        type: 'button', className: a.id === floorArea ? 'active' : '', textContent: busy ? `${a.name} (${busy})` : a.name,
+        onclick: () => { floorArea = a.id; floorSel = null; renderFloor(); },
+      });
+    }));
+    $('#floor-edit-label').textContent = t(editing ? 'floor.done' : 'floor.edit');
+    $('#floor-edit').classList.toggle('primary', editing);
+    $('#floor-tools').hidden = !editing;
+    $('#floor-props').hidden = !editing;
+    $('#floor-takeaway').hidden = editing;
+    $('.floor-wrap').classList.toggle('editing', editing);
+
+    const svgEl = $('#floor');
+    svgEl.setAttribute('class', editing ? 'edit' : 'service');
+    const tables = f.tables.filter(tb => tb.areaId === floorArea);
+    const inArea = new Set(tables.map(tb => tb.id));
+    const chairs = f.chairs.filter(c => inArea.has(c.tableId));
+    const selChair = floorSel && floorSel.type === 'chair' ? floorSel.id : null;
+    const selTable = floorSel && floorSel.type === 'table' ? floorSel.id
+      : selChair ? (f.chairs.find(c => c.id === selChair) || {}).tableId : null;
+
+    const kids = [sv('rect', { class: 'bg', x: 0, y: 0, width: FL.W, height: FL.H, rx: 18 })];
+    if (editing) {
+      for (let x = 50; x < FL.W; x += 50) kids.push(sv('line', { class: 'gridline', x1: x, y1: 0, x2: x, y2: FL.H }));
+      for (let y = 50; y < FL.H; y += 50) kids.push(sv('line', { class: 'gridline', x1: 0, y1: y, x2: FL.W, y2: y }));
+    }
+    kids.push(sv('rect', { class: 'wall', x: 3, y: 3, width: FL.W - 6, height: FL.H - 6, rx: 16 }));
+    // Link lines show which table each chair belongs to.
+    if (editing) {
+      for (const c of chairs) {
+        const tb = tables.find(x => x.id === c.tableId);
+        const p = FL.chairPos(f, c);
+        kids.push(sv('line', { class: 'link' + (c.tableId === selTable ? ' hl' : ''), x1: tb.x, y1: tb.y, x2: p.x, y2: p.y }));
+      }
+    }
+    for (const c of chairs) {
+      const p = FL.chairPos(f, c);
+      const cls = ['chair'];
+      if (data.tabs[c.tableId]) cls.push('busy');
+      if (c.tableId === selTable) cls.push('hl');
+      if (c.id === selChair) cls.push('sel');
+      kids.push(sv('g', { class: cls.join(' '), transform: `translate(${p.x} ${p.y})`, 'data-type': 'chair', 'data-id': c.id, 'data-table': c.tableId },
+        sv('rect', { x: -FL.CHAIR / 2, y: -FL.CHAIR / 2, width: FL.CHAIR, height: FL.CHAIR, rx: 10 })));
+    }
+    for (const tb of tables) {
+      const { w, h } = FL.tableSize(tb);
+      const tab = data.tabs[tb.id];
+      const cls = ['tbl'];
+      if (tab) cls.push('busy');
+      if (floorSel && floorSel.type === 'table' && floorSel.id === tb.id) cls.push('sel');
+      const top = tb.shape === 'round' ? sv('circle', { class: 'top', r: w / 2 }) : sv('rect', { class: 'top', x: -w / 2, y: -h / 2, width: w, height: h, rx: 14 });
+      const texts = tab
+        ? [sv('text', { class: 'name', y: -8 }, tb.name), sv('text', { class: 'sub', y: 12 }, money(tabTotal(tab))), sv('text', { class: 'sub', y: 30 }, t('floor.minutes', { n: minutesSince(tab.openedAt) }))]
+        : [sv('text', { class: 'name', y: 2 }, tb.name), sv('text', { class: 'sub', y: 22 }, t('floor.seats', { n: FL.seats(f, tb.id) }))];
+      kids.push(sv('g', { class: cls.join(' '), transform: `translate(${tb.x} ${tb.y})`, 'data-type': 'table', 'data-id': tb.id, 'aria-label': tb.name },
+        top, ...texts));
+    }
+    svgEl.replaceChildren(...kids);
+    if (editing && !floorDrag) renderFloorProps();
+  }
+
+  function updateFloor(next) {
+    data.floor = next;
+    save();
+    renderFloor();
+  }
+
+  function renderFloorProps() {
+    const f = data.floor;
+    const nodes = [];
+    const btn = (key, fn, cls = 'small') => el('button', { type: 'button', className: cls, textContent: t(key), onclick: guard(fn) });
+    const sel = floorSel && (floorSel.type === 'table' ? f.tables.find(x => x.id === floorSel.id) : f.chairs.find(x => x.id === floorSel.id));
+    if (!sel) floorSel = null;
+    if (floorSel && floorSel.type === 'table') {
+      const tb = sel;
+      const name = el('input', { value: tb.name, maxLength: 20, ariaLabel: t('floor.name') });
+      const shape = el('select', { ariaLabel: t('floor.shape'), onchange: guard(e => updateFloor(FL.setTableShape(data.floor, tb.id, e.target.value))) },
+        ...FL.SHAPES.map(sh => el('option', { value: sh, textContent: t('floor.' + sh) })));
+      shape.value = tb.shape;
+      nodes.push(el('h3', { textContent: t('floor.tableTitle', { name: tb.name }) }),
+        el('p', { className: 'muted small', textContent: t('floor.seats', { n: FL.seats(f, tb.id) }) + (data.tabs[tb.id] ? ' · ' + t('floor.busy') : '') }),
+        el('label', {}, el('span', { textContent: t('floor.name') }), name),
+        btn('floor.rename', () => updateFloor(FL.renameTable(data.floor, tb.id, name.value))),
+        el('label', {}, el('span', { textContent: t('floor.shape') }), shape),
+        el('div', { className: 'row wrap' },
+          btn('floor.rotate', () => updateFloor(FL.rotateTable(data.floor, tb.id))),
+          btn('floor.addChair', () => updateFloor(FL.addChairToTable(data.floor, tb.id, uid('c'))))),
+        btn('floor.deleteTable', () => deleteTableFlow(tb.id), 'small danger'));
+    } else if (floorSel && floorSel.type === 'chair') {
+      const c = sel;
+      const own = f.tables.find(x => x.id === c.tableId);
+      const link = el('select', { ariaLabel: t('floor.linkedTo'), onchange: guard(e => updateFloor(FL.relinkChair(data.floor, c.id, e.target.value))) },
+        ...f.tables.filter(x => x.areaId === own.areaId).map(x => el('option', { value: x.id, textContent: x.name })));
+      link.value = c.tableId;
+      nodes.push(el('h3', { textContent: t('floor.chair') }),
+        el('label', {}, el('span', { textContent: t('floor.linkedTo') }), link),
+        el('p', { className: 'muted small', textContent: t('floor.chairHint') }),
+        btn('floor.deleteChair', () => { floorSel = null; updateFloor(FL.deleteChair(data.floor, c.id)); }, 'small danger'));
+    } else {
+      const area = f.areas.find(a => a.id === floorArea);
+      const name = el('input', { value: area.name, maxLength: 20, ariaLabel: t('floor.name') });
+      nodes.push(el('h3', { textContent: t('floor.area') }),
+        el('label', {}, el('span', { textContent: t('floor.name') }), name),
+        el('div', { className: 'row wrap' },
+          btn('floor.rename', () => updateFloor(FL.renameArea(data.floor, area.id, name.value))),
+          btn('floor.addArea', addAreaFlow)),
+        btn('floor.deleteArea', () => updateFloor(FL.deleteArea(data.floor, area.id)), 'small danger'),
+        el('p', { className: 'muted small', textContent: t('floor.selectHint') }));
+    }
+    $('#floor-props').replaceChildren(...nodes);
+  }
+
+  async function deleteTableFlow(id) {
+    const tb = data.floor.tables.find(x => x.id === id);
+    if (!tb) return;
+    if (data.tabs[id]) throw new Error(t('floor.tableBusy', { name: tb.name }));
+    if (!(await confirmBox(t('floor.deleteTable'), t('floor.deleteTableText', { name: tb.name, n: FL.seats(data.floor, id) })))) return;
+    floorSel = null;
+    updateFloor(FL.deleteTable(data.floor, id));
+  }
+
+  async function addAreaFlow() {
+    const r = await ask({ title: t('floor.addArea'), fields: [{ name: 'name', label: t('floor.name') }] });
+    if (!r) return;
+    const id = uid('a');
+    floorArea = id;
+    floorSel = null;
+    updateFloor(FL.addArea(data.floor, { id, name: r.name }));
+  }
+
+  function svgPoint(evt) {
+    const svgEl = $('#floor');
+    const pt = svgEl.createSVGPoint();
+    pt.x = evt.clientX; pt.y = evt.clientY;
+    return pt.matrixTransform(svgEl.getScreenCTM().inverse());
+  }
+
+  // A spot in the current area that is not on top of another table.
+  function freeSpot() {
+    const tables = data.floor.tables.filter(tb => tb.areaId === floorArea);
+    for (let y = 150; y < FL.H - 100; y += 100) {
+      for (let x = 150; x < FL.W - 100; x += 120) {
+        if (tables.every(tb => Math.hypot(tb.x - x, tb.y - y) > 190)) return { x, y };
+      }
+    }
+    return { x: FL.W / 2, y: FL.H / 2 };
+  }
+
+  function addFromTool(tool, p, tapped) {
+    if (tool === 'chair') {
+      const id = uid('c');
+      const selTable = floorSel && floorSel.type === 'table' ? floorSel.id : null;
+      // Tapping "Chair" with a table selected adds a chair to that table.
+      const next = tapped && selTable ? FL.addChairToTable(data.floor, selTable, id) : FL.placeChair(data.floor, { id, areaId: floorArea, x: p.x, y: p.y });
+      floorSel = { type: 'chair', id };
+      updateFloor(next);
+    } else {
+      const id = uid('t');
+      const next = FL.addTable(data.floor, { id, areaId: floorArea, shape: tool, x: p.x, y: p.y });
+      floorSel = { type: 'table', id };
+      updateFloor(next);
+    }
+  }
+
+  // Toolbox items: drag onto the floor, or tap to add in a free spot.
+  function wireTool(btnEl) {
+    let ghost = null, start = null, moved = false;
+    btnEl.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      btnEl.setPointerCapture(e.pointerId);
+      start = { x: e.clientX, y: e.clientY };
+      moved = false;
+      ghost = el('div', { className: 'floor-ghost ' + btnEl.dataset.tool, hidden: true });
+      document.body.append(ghost);
+    });
+    btnEl.addEventListener('pointermove', e => {
+      if (!ghost) return;
+      if (!moved && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) { moved = true; ghost.hidden = false; }
+      ghost.style.left = e.clientX + 'px';
+      ghost.style.top = e.clientY + 'px';
+    });
+    btnEl.addEventListener('pointerup', guard(e => {
+      if (!ghost) return;
+      ghost.remove();
+      ghost = null;
+      if (!moved) return addFromTool(btnEl.dataset.tool, freeSpot(), true);
+      const r = $('#floor').getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+      addFromTool(btnEl.dataset.tool, svgPoint(e), false);
+    }));
+    btnEl.addEventListener('pointercancel', () => { if (ghost) { ghost.remove(); ghost = null; } });
+    // Keyboard (Enter/Space): add in a free spot.
+    btnEl.addEventListener('click', guard(e => { if (e.detail === 0) addFromTool(btnEl.dataset.tool, freeSpot(), true); }));
+  }
+
+  function wireFloorPointer() {
+    const svgEl = $('#floor');
+    svgEl.addEventListener('pointerdown', e => {
+      if (!floorEdit) return;
+      const g = e.target.closest('[data-type]');
+      if (!g) { if (floorSel) { floorSel = null; renderFloor(); } return; }
+      e.preventDefault();
+      const f = data.floor;
+      const { type, id } = g.dataset;
+      const origin = type === 'table' ? (({ x, y }) => ({ x, y }))(f.tables.find(x => x.id === id)) : FL.chairPos(f, f.chairs.find(c => c.id === id));
+      floorDrag = { type, id, origin, start: svgPoint(e), moved: false, preview: null, pointerId: e.pointerId };
+      svgEl.setPointerCapture(e.pointerId);
+    });
+    svgEl.addEventListener('pointermove', e => {
+      if (!floorDrag || e.pointerId !== floorDrag.pointerId) return;
+      const p = svgPoint(e);
+      const dx = p.x - floorDrag.start.x, dy = p.y - floorDrag.start.y;
+      if (!floorDrag.moved && Math.hypot(dx, dy) < 4) return;
+      floorDrag.moved = true;
+      try {
+        // Tables carry their chairs; a dragged chair couples to the nearest table.
+        floorDrag.preview = floorDrag.type === 'table'
+          ? FL.moveTable(data.floor, floorDrag.id, floorDrag.origin.x + dx, floorDrag.origin.y + dy)
+          : FL.placeChair(data.floor, { id: floorDrag.id, x: floorDrag.origin.x + dx, y: floorDrag.origin.y + dy });
+        floorSel = { type: floorDrag.type, id: floorDrag.id };
+        renderFloor(floorDrag.preview);
+      } catch (err) { /* keep the last valid position */ }
+    });
+    svgEl.addEventListener('pointerup', e => {
+      if (!floorDrag || e.pointerId !== floorDrag.pointerId) return;
+      const d = floorDrag;
+      floorDrag = null;
+      floorSel = { type: d.type, id: d.id };
+      if (d.moved && d.preview) updateFloor(d.preview); else renderFloor();
+    });
+    svgEl.addEventListener('pointercancel', () => { if (floorDrag) { floorDrag = null; renderFloor(); } });
+    // Service mode: tap a table (or one of its chairs) to open its order.
+    svgEl.addEventListener('click', e => {
+      if (floorEdit) return;
+      const g = e.target.closest('[data-type]');
+      if (g) guard(openTable)(g.dataset.type === 'table' ? g.dataset.id : g.dataset.table);
+    });
+  }
+
+  // Edit mode keys: arrows nudge the selection (Shift = bigger steps), Delete removes it.
+  function floorKey(e) {
+    if (!floorSel || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName)) return false;
+    const step = e.shiftKey ? 50 : FL.GRID;
+    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    const f = data.floor;
+    try {
+      if (d) {
+        e.preventDefault();
+        if (floorSel.type === 'table') {
+          const tb = f.tables.find(x => x.id === floorSel.id);
+          updateFloor(FL.moveTable(f, tb.id, tb.x + d[0], tb.y + d[1]));
+        } else {
+          const c = f.chairs.find(x => x.id === floorSel.id);
+          const p = FL.chairPos(f, c);
+          updateFloor(FL.placeChair(f, { id: c.id, x: p.x + d[0], y: p.y + d[1], tableId: c.tableId }));
+        }
+        return true;
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        if (floorSel.type === 'table') guard(deleteTableFlow)(floorSel.id);
+        else { const id = floorSel.id; floorSel = null; updateFloor(FL.deleteChair(f, id)); }
+        return true;
+      }
+    } catch (err) { toast(errText(err), true); return true; }
+    return false;
+  }
+
+  // ---- table orders
+  function openTable(id) {
+    const tb = data.floor.tables.find(x => x.id === id);
+    if (!tb) return;
+    if (!activeTable && cart.length) throw new Error(t('floor.finishCounter'));
+    if (activeTable) syncTab();
+    activeTable = id;
+    const tab = data.tabs[id];
+    cart = tab ? repriceCart(tab.cart) : [];
+    orderDiscountPct = tab ? tab.orderDiscountPct || 0 : 0;
+    showView('register');
+    renderCart(); renderGrid();
+  }
+
+  function leaveTable() {
+    if (!activeTable) return;
+    syncTab();
+    activeTable = null;
+    cart = []; orderDiscountPct = 0;
+    renderCart(); renderGrid();
+  }
+
+  async function moveTabFlow() {
+    if (!activeTable || !cart.length) return;
+    const free = data.floor.tables.filter(x => x.id !== activeTable && !data.tabs[x.id]);
+    if (!free.length) throw new Error(t('floor.noFree'));
+    const r = await ask({ title: t('floor.move'), fields: [{ name: 'to', label: t('floor.moveTo'), type: 'select',
+      options: free.map(x => ({ value: x.id, label: `${x.name} · ${areaName(x.areaId)}` })) }] });
+    if (!r || !free.some(x => x.id === r.to)) return;
+    const tab = data.tabs[activeTable];
+    delete data.tabs[activeTable];
+    data.tabs[r.to] = { ...tab, cart, orderDiscountPct };
+    activeTable = r.to;
+    save(); renderCart();
+    toast(t('floor.moved', { name: data.floor.tables.find(x => x.id === r.to).name }));
   }
 
   // ---------------------------------------------------------------- sales ---
@@ -1350,6 +1819,8 @@
     const shift = currentShift();
     if (!shift) return;
     if (data.held.length && !(await confirmBox(t('shift.heldTitle'), t('shift.heldText', { n: data.held.length })))) return;
+    const openTabs = Object.keys(data.tabs).length;
+    if (openTabs && !(await confirmBox(t('floor.openTitle'), t('floor.openText', { n: openTabs })))) return;
     kickDrawer(); // open the drawer so the cash can be counted
     const r = await ask({ title: t('shift.close'), text: t('shift.closeText'), ok: t('shift.close'),
       fields: [{ name: 'counted', label: t('shift.counted'), inputmode: 'decimal' }] });
@@ -1596,6 +2067,10 @@
     data.products = data.products.filter(x => x.id !== id);
     data.sampleCatalog = false;
     cart = cart.filter(l => l.id !== id);
+    for (const [tid, tab] of Object.entries(data.tabs)) {
+      tab.cart = tab.cart.filter(l => l.id !== id);
+      if (!tab.cart.length) delete data.tabs[tid];
+    }
     save(); renderAll();
   }
 
@@ -1679,7 +2154,17 @@
     f.branch.value = s.branch || HEAD_OFFICE; f.posRegNo.value = s.posRegNo || ''; f.promptpayId.value = s.promptpayId || '';
     f.machineBrand.value = s.machineBrand || ''; f.machineModel.value = s.machineModel || ''; f.machineSerial.value = s.machineSerial || '';
     f.storeName.value = s.storeName; f.header.value = s.header; f.footer.value = s.footer; f.cashierMaxDiscount.value = s.cashierMaxDiscount;
+    f.businessType.value = s.businessType;
     $('#th-fields').hidden = s.country !== 'TH';
+  }
+
+  let settingsTab = 'store';
+  function showSettingsTab(name) {
+    settingsTab = name;
+    for (const b of $$('#settings-tabs button')) b.classList.toggle('active', b.dataset.panel === name);
+    for (const e of $$('#view-settings [data-panel]')) {
+      if (!e.closest('#settings-tabs')) e.classList.toggle('off', !e.dataset.panel.split(' ').includes(name));
+    }
   }
 
   async function renderStorageInfo() {
@@ -1760,10 +2245,12 @@
       taxId: country === 'TH' ? taxId : f.taxId.value.trim(), branch, posRegNo: f.posRegNo.value.trim(), promptpayId,
       machineBrand: f.machineBrand.value.trim(), machineModel: f.machineModel.value.trim(), machineSerial: f.machineSerial.value.trim(),
       storeName: f.storeName.value.trim() || 'My Store', header: f.header.value.trim(), footer: f.footer.value.trim(),
-      cashierMaxDiscount: maxD, regionChosen: true,
+      cashierMaxDiscount: maxD, regionChosen: true, businessType: f.businessType.value === 'restaurant' ? 'restaurant' : 'retail',
     };
     const changed = Object.fromEntries(TAX_FIELDS.filter(k => next[k] !== prev[k]).map(k => [k, next[k]]));
     data.settings = next;
+    if (isRestaurant() && !data.floor.tables.length) data.floor = FL.sampleFloor(t('floor.mainArea'));
+    if (!isRestaurant()) activeTable = null;
     if (Object.keys(changed).length) journalAdd('settings', { doc: changed });
     save(); applyI18n(); applyRole(); renderAll(); toast(t('set.saved'));
     if (thaiVat && f.language.value !== 'th') toast(t('set.thaiForced'));
@@ -1874,11 +2361,16 @@
   // --------------------------------------------------------------- wiring ---
   function renderAll() {
     renderSettings(); renderCategories(); renderGrid(); renderCart(); renderSales(); renderShift(); renderAlerts();
+    applyRole();
+    if (currentView === 'tables') renderFloor();
+    $('#page-title').textContent = t('nav.' + currentView);
     if (isManager()) { renderReports(); renderProducts(); renderStaff(); if ($('#view-journal').classList.contains('active')) renderJournal(); }
   }
 
   function wire() {
     buildKeypad();
+    applyIcons();
+    showSettingsTab('store');
     for (const b of $$('.lang-toggle')) b.addEventListener('click', toggleLang);
     for (const b of $$('nav button')) b.addEventListener('click', () => showView(b.dataset.view));
     $('#lock').addEventListener('click', lock);
@@ -1898,10 +2390,14 @@
       e.target.value = '';
       addProduct(target);
     }));
-    $('#order-discount').addEventListener('change', guard(async e => {
-      try { await changeDiscount(Number(e.target.value), pct => { orderDiscountPct = pct; }, 'reg.orderDiscW'); }
-      finally { renderCart(); }
-    }));
+    $('#order-discount-btn').addEventListener('click', guard(orderDiscountFlow));
+    $('#to-floor').addEventListener('click', () => { leaveTable(); showView('tables'); });
+    $('#move-table').addEventListener('click', guard(moveTabFlow));
+    $('#floor-edit').addEventListener('click', () => { floorEdit = !floorEdit; floorSel = null; renderFloor(); });
+    $('#floor-takeaway').addEventListener('click', guard(() => { if (activeTable) leaveTable(); showView('register'); }));
+    for (const b of $$('.tool')) wireTool(b);
+    wireFloorPointer();
+    for (const b of $$('#settings-tabs button')) b.addEventListener('click', () => showSettingsTab(b.dataset.panel));
     $('#void-sale').addEventListener('click', guard(async () => {
       if (cart.length && (await confirmBox(t('reg.voidTitle'), t('reg.voidText')))) resetSale();
     }));
@@ -1935,7 +2431,11 @@
     $('#hw-quit').addEventListener('click', guard(async () => {
       if (await confirmBox(t('hw.quit'), t('hw.quitText'))) { await saving; native.quit(); }
     }));
-    $('#close-receipt').addEventListener('click', () => { $('#receipt-dialog').close(); if ($('#view-register').classList.contains('active')) $('#search').focus(); });
+    $('#close-receipt').addEventListener('click', () => {
+      $('#receipt-dialog').close();
+      if (backToFloor) { backToFloor = false; if (isRestaurant()) { showView('tables'); return; } }
+      if ($('#view-register').classList.contains('active')) $('#search').focus();
+    });
 
     $('#sale-search').addEventListener('input', renderSales);
     $('#rep-from').addEventListener('change', renderReports);
@@ -1971,6 +2471,7 @@
     document.addEventListener('keydown', e => {
       resetIdle();
       if (!user || $$('dialog').some(d => d.open)) return;
+      if (currentView === 'tables' && floorEdit && floorKey(e)) return;
       const keys = { F1: 'register', F2: 'sales', F3: 'shift' };
       if (keys[e.key]) { e.preventDefault(); showView(keys[e.key]); }
       else if (e.key === 'F4') { e.preventDefault(); showView('register'); $('#search').focus(); }
@@ -1979,7 +2480,10 @@
     });
     for (const ev of ['pointerdown', 'touchstart']) document.addEventListener(ev, resetIdle, { passive: true });
 
-    const tick = () => { $('#clock').textContent = new Date().toLocaleTimeString(S().locale, { hour: '2-digit', minute: '2-digit' }); };
+    const tick = () => {
+      $('#clock').textContent = new Date().toLocaleTimeString(S().locale, { hour: '2-digit', minute: '2-digit' });
+      if (user && currentView === 'tables' && !floorEdit && !floorDrag) renderFloor(); // refresh "minutes open"
+    };
     tick(); setInterval(tick, 15000);
   }
 

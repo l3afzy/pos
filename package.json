@@ -1,7 +1,7 @@
 {
   "name": "pos-terminal",
   "productName": "POS Terminal",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "private": true,
   "description": "Point of sale for retail and quick-service stores, with Thai Revenue Department tax documents",
   "author": "l3afzy",

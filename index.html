@@ -22,25 +22,30 @@
   </div>
 </section>
 
-<div id="app" hidden>
-  <header class="topbar">
-    <strong id="store-name">POS</strong>
+<div id="app" class="shell" hidden>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-logo" data-icon="receipt"></span><strong id="store-name">POS</strong></div>
     <nav id="nav">
-      <button data-view="register" class="active"><span data-i18n="nav.register">Register</span> <kbd>F1</kbd></button>
-      <button data-view="sales"><span data-i18n="nav.sales">Sales</span> <kbd>F2</kbd></button>
-      <button data-view="shift"><span data-i18n="nav.shift">Shift</span> <kbd>F3</kbd></button>
-      <button data-view="reports" data-role="manager" data-i18n="nav.reports">Reports</button>
-      <button data-view="products" data-role="manager" data-i18n="nav.products">Products</button>
-      <button data-view="journal" data-role="manager" data-i18n="nav.journal">Journal</button>
-      <button data-view="staff" data-role="manager" data-i18n="nav.staff">Staff</button>
-      <button data-view="settings" data-role="manager" data-i18n="nav.settings">Settings</button>
+      <button data-view="tables" data-mode="restaurant"><span class="ico" data-icon="tables"></span><span data-i18n="nav.tables">Tables</span></button>
+      <button data-view="register" class="active"><span class="ico" data-icon="cart"></span><span data-i18n="nav.register">Register</span></button>
+      <button data-view="sales"><span class="ico" data-icon="receipt"></span><span data-i18n="nav.sales">Sales</span></button>
+      <button data-view="shift"><span class="ico" data-icon="cash"></span><span data-i18n="nav.shift">Shift</span></button>
+      <button data-view="reports" data-role="manager"><span class="ico" data-icon="chart"></span><span data-i18n="nav.reports">Reports</span></button>
+      <button data-view="products" data-role="manager"><span class="ico" data-icon="box"></span><span data-i18n="nav.products">Products</span></button>
+      <button data-view="journal" data-role="manager"><span class="ico" data-icon="book"></span><span data-i18n="nav.journal">Journal</span></button>
+      <button data-view="staff" data-role="manager"><span class="ico" data-icon="users"></span><span data-i18n="nav.staff">Staff</span></button>
+      <button data-view="settings" data-role="manager"><span class="ico" data-icon="gear"></span><span data-i18n="nav.settings">Settings</span></button>
     </nav>
+  </aside>
+  <div class="main-col">
+  <header class="topbar">
+    <h1 id="page-title"></h1>
     <span class="spacer"></span>
     <span id="shift-badge" class="badge"></span>
-    <span id="clock" class="muted"></span>
-    <span id="user-badge" class="badge"></span>
-    <button class="lang-toggle small" type="button"></button>
-    <button id="lock" data-i18n="nav.lock">Lock</button>
+    <span id="clock" class="clock"></span>
+    <span id="user-badge" class="badge user"></span>
+    <button class="lang-toggle icon-btn" type="button"></button>
+    <button id="lock" class="icon-btn" type="button"><span data-icon="lock"></span><span data-i18n="nav.lock">Lock</span></button>
   </header>
 
   <div id="alerts" class="alerts" hidden></div>
@@ -54,32 +59,56 @@
       </div>
       <aside class="cart">
         <div class="cart-head">
-          <h2 data-i18n="reg.current">Current Sale</h2>
+          <div class="cart-title">
+            <h2 id="cart-title"></h2>
+            <div id="cart-sub" class="muted small"></div>
+          </div>
           <div class="row tight">
-            <button id="hold" class="small" data-i18n="reg.hold">Hold</button>
-            <button id="recall" class="small"><span data-i18n="reg.recall">Recall</span> <span id="held-count"></span></button>
+            <button id="to-floor" class="small" type="button" hidden><span data-icon="tables"></span><span data-i18n="floor.back">Tables</span></button>
+            <button id="move-table" class="small" type="button" data-i18n="floor.move" hidden>Move</button>
+            <button id="hold" class="small" type="button" data-i18n="reg.hold">Hold</button>
+            <button id="recall" class="small" type="button"><span data-i18n="reg.recall">Recall</span> <span id="held-count"></span></button>
           </div>
         </div>
         <div id="no-shift" class="notice" hidden><span data-i18n="reg.noShift">No shift open.</span> <button id="goto-shift" class="small primary" data-i18n="shift.open">Open shift</button></div>
-        <table class="cart-table">
-          <thead><tr><th data-i18n="col.item">Item</th><th class="num" data-i18n="col.qty">Qty</th><th class="num" data-i18n="col.disc">Disc%</th><th class="num" data-i18n="col.total">Total</th><th></th></tr></thead>
-          <tbody id="cart-lines"></tbody>
-        </table>
-        <label class="inline"><span data-i18n="reg.orderDiscount">Order discount %</span>
-          <input id="order-discount" type="number" min="0" max="100" step="1" value="0">
-        </label>
+        <ul id="cart-lines" class="cart-lines"></ul>
         <dl id="totals" class="totals"></dl>
-        <div class="row">
-          <button id="void-sale" class="danger" data-i18n="reg.void">Void</button>
-          <button id="pay" class="primary big"><span data-i18n="reg.pay">Pay</span> <kbd>F12</kbd></button>
+        <div class="cart-actions">
+          <button id="void-sale" class="ghost danger-text" type="button" data-i18n="reg.clear">Clear</button>
+          <button id="order-discount-btn" type="button" data-i18n="reg.discountBtn">Discount</button>
+          <button id="pay" class="pay-btn" type="button"><span data-i18n="reg.pay">Pay</span> <span id="pay-amount-label"></span></button>
         </div>
       </aside>
+    </section>
+
+    <!-- Tables (restaurant floor) -->
+    <section id="view-tables" class="view">
+      <div class="floor-bar">
+        <div id="area-tabs" class="chips"></div>
+        <span class="spacer"></span>
+        <span class="legend"><i class="dot free"></i><span data-i18n="floor.free">Free</span> <i class="dot busy"></i><span data-i18n="floor.busy">Occupied</span></span>
+        <button id="floor-takeaway" type="button" data-i18n="floor.takeaway">Takeaway</button>
+        <button id="floor-edit" type="button" data-role="manager"><span data-icon="edit"></span><span id="floor-edit-label" data-i18n="floor.edit">Edit layout</span></button>
+      </div>
+      <div class="floor-wrap">
+        <div id="floor-tools" class="floor-tools" hidden>
+          <p class="tools-title" data-i18n="floor.dragHint">Drag onto the floor</p>
+          <button type="button" class="tool" data-tool="square"><i class="shape square"></i><span data-i18n="floor.square">Square table</span></button>
+          <button type="button" class="tool" data-tool="round"><i class="shape round"></i><span data-i18n="floor.round">Round table</span></button>
+          <button type="button" class="tool" data-tool="long"><i class="shape long"></i><span data-i18n="floor.long">Long table</span></button>
+          <button type="button" class="tool" data-tool="chair"><i class="shape chair"></i><span data-i18n="floor.chair">Chair</span></button>
+          <p class="muted small" data-i18n="floor.coupleHint">A chair links to the nearest table. Moving or rotating a table moves its chairs.</p>
+        </div>
+        <div class="floor-stage">
+          <svg id="floor" viewBox="0 0 1200 800" role="img" aria-label="Floor plan"></svg>
+        </div>
+        <div id="floor-props" class="floor-props" hidden></div>
+      </div>
     </section>
 
     <!-- Sales -->
     <section id="view-sales" class="view">
       <div class="toolbar">
-        <h2 data-i18n="nav.sales">Sales</h2>
         <input id="sale-search" type="search" data-i18n-ph="sales.search">
       </div>
       <table><thead><tr><th data-i18n="col.no">No.</th><th data-i18n="col.date">Date</th><th data-i18n="col.cashier">Cashier</th><th data-i18n="col.tender">Tender</th><th class="num" data-i18n="col.total">Total</th><th data-i18n="col.status">Status</th><th></th></tr></thead>
@@ -102,7 +131,6 @@
     <!-- Reports -->
     <section id="view-reports" class="view">
       <div class="toolbar">
-        <h2 data-i18n="nav.reports">Reports</h2>
         <label><span data-i18n="rep.from">From</span> <input id="rep-from" type="date"></label>
         <label><span data-i18n="rep.to">To</span> <input id="rep-to" type="date"></label>
         <button id="rep-today" class="small" data-i18n="rep.today">Today</button>
@@ -133,7 +161,6 @@
     <!-- Products -->
     <section id="view-products" class="view">
       <div class="toolbar">
-        <h2 data-i18n="nav.products">Products</h2>
         <input id="product-filter" type="search" data-i18n-ph="prod.filter">
         <label class="inline"><input id="low-only" type="checkbox"> <span data-i18n="prod.lowOnly">Low stock only</span></label>
       </div>
@@ -157,7 +184,6 @@
     <!-- Journal -->
     <section id="view-journal" class="view">
       <div class="toolbar">
-        <h2 data-i18n="nav.journal">Journal</h2>
         <label><span data-i18n="col.date">Date</span> <input id="journal-day" type="date"></label>
         <button id="journal-verify" class="small" data-i18n="journal.verify">Verify</button>
         <button id="journal-export" class="small" data-i18n="journal.export">Export journal</button>
@@ -170,7 +196,6 @@
 
     <!-- Staff -->
     <section id="view-staff" class="view">
-      <h2 data-i18n="nav.staff">Staff</h2>
       <form id="staff-form" class="inline-form">
         <input type="hidden" name="id">
         <input name="name" data-i18n-ph="staff.name" required>
@@ -184,9 +209,14 @@
 
     <!-- Settings -->
     <section id="view-settings" class="view">
-      <h2 data-i18n="nav.settings">Settings</h2>
+      <div id="settings-tabs" class="subtabs">
+        <button type="button" data-panel="store" class="active" data-i18n="set.tabStore">Store</button>
+        <button type="button" data-panel="region" data-i18n="set.tabRegion">Tax &amp; region</button>
+        <button type="button" data-panel="hardware" data-native data-i18n="set.tabHardware">Printer &amp; drawer</button>
+        <button type="button" data-panel="data" data-i18n="set.tabData">Backup &amp; data</button>
+      </div>
       <form id="settings-form" class="settings">
-        <fieldset>
+        <fieldset data-panel="region">
           <legend data-i18n="set.region">Region &amp; tax</legend>
           <label><span data-i18n="set.preset">Country profile</span>
             <select name="country">
@@ -211,7 +241,7 @@
           <label><span data-i18n="set.taxId">Tax ID / VAT no. (blank if not registered)</span> <input name="taxId"></label>
           <label><span data-i18n="set.denoms">Quick cash notes (comma separated)</span> <input name="cashDenoms"></label>
         </fieldset>
-        <fieldset id="th-fields">
+        <fieldset id="th-fields" data-panel="region">
           <legend data-i18n="set.thai">Thailand: tax invoice &amp; PromptPay</legend>
           <label><span data-i18n="set.branch">Branch (สำนักงานใหญ่ or 5-digit branch no.)</span> <input name="branch"></label>
           <label><span data-i18n="set.posReg">POS registration no. (from Revenue Dept.)</span> <input name="posRegNo"></label>
@@ -221,16 +251,22 @@
           <label><span data-i18n="set.machineSerial">Computer serial number (for ภ.พ.06)</span> <input name="machineSerial"></label>
           <button type="button" id="pp06" class="small" data-i18n="set.pp06">Print ภ.พ.06 attachments</button>
         </fieldset>
-        <fieldset>
+        <fieldset data-panel="store">
           <legend data-i18n="set.store">Store &amp; receipts</legend>
           <label><span data-i18n="set.storeName">Store name</span> <input name="storeName" required></label>
+          <label><span data-i18n="set.businessType">Business type</span>
+            <select name="businessType">
+              <option value="retail" data-i18n="biz.retail">Shop (counter sales)</option>
+              <option value="restaurant" data-i18n="biz.restaurant">Restaurant (table service)</option>
+            </select>
+          </label>
           <label><span data-i18n="set.header">Address / phone (receipt header)</span> <textarea name="header" rows="2"></textarea></label>
           <label><span data-i18n="set.footer">Receipt footer</span> <textarea name="footer" rows="2"></textarea></label>
           <label><span data-i18n="set.maxDisc">Max discount % a cashier may give without manager approval</span> <input name="cashierMaxDiscount" type="number" min="0" max="100" step="1" required></label>
         </fieldset>
-        <div><button class="primary" type="submit" data-i18n="set.save">Save settings</button></div>
+        <div data-panel="region store"><button class="primary" type="submit" data-i18n="set.save">Save settings</button></div>
       </form>
-      <form id="hw-form" class="settings hw" hidden>
+      <form id="hw-form" class="settings hw" data-panel="hardware" hidden>
         <fieldset>
           <legend data-i18n="hw.title">Hardware (desktop app)</legend>
           <label><span data-i18n="hw.receiptPrinter">Receipt printer</span> <select name="receiptPrinter"></select></label>
@@ -266,15 +302,18 @@
         </fieldset>
         <div><button class="primary" type="submit" data-i18n="hw.save">Save hardware settings</button></div>
       </form>
-      <h3 data-i18n="set.data">Data</h3>
-      <p id="storage-info" class="muted small"></p>
-      <div class="row wrap">
-        <button id="backup" data-i18n="set.backup">Download backup</button>
-        <label class="button"><span data-i18n="set.restore">Restore backup</span><input id="restore" type="file" accept="application/json" hidden></label>
-        <button id="reset-data" class="danger" data-i18n="set.reset">Reset all data</button>
+      <div data-panel="data" class="panel-box">
+        <h3 data-i18n="set.data">Data</h3>
+        <p id="storage-info" class="muted small"></p>
+        <div class="row wrap">
+          <button id="backup" data-i18n="set.backup">Download backup</button>
+          <label class="button"><span data-i18n="set.restore">Restore backup</span><input id="restore" type="file" accept="application/json" hidden></label>
+          <button id="reset-data" class="danger" data-i18n="set.reset">Reset all data</button>
+        </div>
       </div>
     </section>
   </main>
+  </div>
 </div>
 
 <div id="toast" role="status" aria-live="polite"></div>
@@ -340,6 +379,7 @@
 <script src="src/vendor/qrcode.js"></script>
 <script src="src/i18n.js"></script>
 <script src="src/core.js"></script>
+<script src="src/floor.js"></script>
 <script src="src/storage.js"></script>
 <script src="src/app.js"></script>
 </body>

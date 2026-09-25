@@ -55,10 +55,16 @@ Without pushing a tag: **Actions → Test and build desktop app → Run workflow
 ## Features
 **Checkout**
 - Product grid with category tabs, search, and barcode/SKU scanning (type or scan the SKU and press Enter)
-- Change quantities in the cart, per-item % discounts, and a % discount on the whole order
+- Simple cart with − and + buttons; tap an item for a per-item discount; **Discount** gives a % off the whole order
 - Split payments across cash, card and PromptPay, quick-cash buttons for your notes, and automatic change
 - Hold a sale and recall it later (recalled items are re-priced from the current catalog)
 - Printable 80mm receipts with your store header and footer, the cashier's name and the savings. Thai and other scripts line up correctly
+
+**Restaurant tables** (Settings → Store → Business type → *Restaurant*)
+- **Floor plan:** managers tap **Edit layout** and drag square, round and long tables and chairs from the toolbox onto the floor. Several areas are supported (e.g. inside and terrace).
+- **Chairs stay with their table:** each chair is linked to one table and can be placed anywhere around it. Moving or rotating a table moves its chairs; a chair dropped closer to another table joins that table (or pick its table in the side panel). Dashed lines show the links, and each table shows its seat count.
+- **Table service:** tap a table to open its order, add items, go back to the floor, and come back later. The order is saved on the table. Occupied tables turn orange and show the running total and how many minutes they have been open. **Move table** moves an order to a free table, and paying frees the table; the receipt shows the table.
+- A table with an open order can't be deleted, and orders stay open across shifts.
 
 **Staff and controls**
 - Staff sign in with a PIN, with Manager and Cashier roles; the terminal locks after 5 wrong PINs and after 5 minutes idle
@@ -77,7 +83,7 @@ Without pushing a tag: **Actions → Test and build desktop app → Run workflow
 - Settings: tax rate, receipt text, cashier discount limit, and backup/restore (JSON)
 - Journal: a tamper-evident record of every document and cash event, which can be verified and exported
 
-**Keyboard shortcuts:** F1 Register · F2 Sales · F3 Shift & day close · F4 Search · F12 Pay · Ctrl+L Lock
+**Keyboard shortcuts:** F1 Register · F2 Sales · F3 Shift & day close · F4 Search · F12 Pay · Ctrl+L Lock · in the floor editor, arrow keys nudge the selected table or chair and Delete removes it
 
 ## Country profiles
 Choose a profile at first sign-in or under **Settings → Region & tax**. After picking one you can still change any field yourself.
