@@ -50,6 +50,8 @@ git push origin v4.2.0
 ```
 GitHub Actions tests the code, builds the Windows, macOS and Linux installers and publishes them as a Release. A tag that doesn't match `package.json` is refused.
 
+Without pushing a tag: **Actions → Test and build desktop app → Run workflow**, choose the branch, tick **publish**, and run. The release is tagged `v<package.json version>`; if that version already exists, the run stops and asks you to bump the version.
+
 ## Features
 **Checkout**
 - Product grid with category tabs, search, and barcode/SKU scanning (type or scan the SKU and press Enter)
